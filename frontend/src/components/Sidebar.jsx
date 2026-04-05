@@ -1,11 +1,13 @@
-export default function Sidebar({ page, setPage, user, onLogout }) {
+export default function Sidebar({ page, setPage, user, onLogout, allowedPages = [] }) {
   const nav = [
     { id: 'dashboard',   icon: 'fa-tachometer-alt', label: 'Dashboard'         },
+    { id: 'cameraLocations', icon: 'fa-map-marker-alt', label: 'Camera Locations' },
     { id: 'cameras',     icon: 'fa-video',           label: 'Camera Management' },
     { id: 'collisions',  icon: 'fa-exclamation-triangle', label: 'Collision Logs' },
     { id: 'users',       icon: 'fa-users',           label: 'User Management'   },
     { id: 'alerts',      icon: 'fa-bell',            label: 'Alert History'     },
   ]
+  const visibleNav = allowedPages.length ? nav.filter(item => allowedPages.includes(item.id)) : nav
 
   const initials = (user?.full_name || 'BC')
     .split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
@@ -36,7 +38,7 @@ export default function Sidebar({ page, setPage, user, onLogout }) {
 
       {/* Nav */}
       <nav className="space-y-1 flex-1">
-        {nav.map(item => (
+        {visibleNav.map(item => (
           <button
             key={item.id}
             onClick={() => setPage(item.id)}

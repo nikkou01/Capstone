@@ -3,6 +3,7 @@ import { login, fetchMe, logout as apiLogout } from './api'
 import { NotifProvider, useNotif } from './context/NotifContext'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
+import CameraLocations from './pages/CameraLocations'
 import Cameras from './pages/Cameras'
 import Collisions from './pages/Collisions'
 import Users from './pages/Users'
@@ -118,29 +119,52 @@ function Login({ onLogin }) {
 // ── Main Shell ────────────────────────────────────────────────────────────────
 const PAGE_META = {
   dashboard:  { title: 'Dashboard',         subtitle: 'Monitor your surveillance system and collision detection alerts' },
+  cameraLocations: { title: 'Camera Locations', subtitle: 'Assign and view map pinpoints for every camera' },
   cameras:    { title: 'Camera Management', subtitle: 'Manage and monitor your CCTV cameras' },
   collisions: { title: 'Collision Logs',    subtitle: 'View detailed collision detection events' },
   users:      { title: 'User Management',   subtitle: 'Manage system users and permissions' },
   alerts:     { title: 'Alert History',     subtitle: 'View SMS alert delivery history' },
 }
 
-const PAGES = { dashboard: Dashboard, cameras: Cameras, collisions: Collisions, users: Users, alerts: Alerts }
+const PAGES = {
+  dashboard: Dashboard,
+  cameraLocations: CameraLocations,
+  cameras: Cameras,
+  collisions: Collisions,
+  users: Users,
+  alerts: Alerts,
+}
+const CAPTAIN_PAGES = ['dashboard', 'cameraLocations', 'cameras', 'collisions', 'users', 'alerts']
+const RESPONDER_PAGES = ['dashboard', 'cameraLocations', 'collisions', 'alerts']
 
 function Shell({ user, onLogout }) {
   const [page, setPage] = useState('dashboard')
   const [time, setTime] = useState(new Date().toLocaleString())
   const notify = useNotif()
-  const meta   = PAGE_META[page]
-  const PageComponent = PAGES[page]
+  const isCaptain = String(user?.role || '').toLowerCase() === 'captain'
+  const allowedPages = isCaptain ? CAPTAIN_PAGES : RESPONDER_PAGES
+  const safePage = allowedPages.includes(page) ? page : 'dashboard'
+  const meta = PAGE_META[safePage]
+  const PageComponent = PAGES[safePage]
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date().toLocaleString()), 1000)
     return () => clearInterval(t)
   }, [])
 
+  useEffect(() => {
+    if (!allowedPages.includes(page)) setPage('dashboard')
+  }, [page, allowedPages])
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar page={page} setPage={setPage} user={user} onLogout={onLogout} />
+      <Sidebar
+        page={safePage}
+        setPage={setPage}
+        user={user}
+        onLogout={onLogout}
+        allowedPages={allowedPages}
+      />
       <div className="flex-1 p-6 min-w-0">
         <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
           <div>

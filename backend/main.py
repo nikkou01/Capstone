@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 from pydantic import BaseModel, Field
 from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
@@ -62,13 +63,18 @@ def make_token(data: dict) -> str:
 
 async def get_current_user(token: str = Depends(oauth2), db=Depends(get_db)):
     try:
-        payload  = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if not username:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        subject = payload.get("sub")
+        if not subject:
             raise ValueError
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    user = await db.users.find_one({"username": username})
+
+    # New tokens store user id in sub; fallback to username for legacy tokens.
+    user = await db.users.find_one({"id": subject})
+    if not user:
+        user = await db.users.find_one({"username": subject})
+
     if not user or not user.get("is_active"):
         raise HTTPException(status_code=401, detail="User not found or inactive")
     return user
@@ -104,7 +110,7 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db=Depends(get_db))
     user = await db.users.find_one({"username": form.username})
     if not user or not verify_pw(form.password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    return {"access_token": make_token({"sub": user["username"]}), "token_type": "bearer"}
+    return {"access_token": make_token({"sub": user["id"]}), "token_type": "bearer"}
 
 @app.get("/api/auth/me")
 async def me(user=Depends(get_current_user)):
@@ -120,6 +126,8 @@ class CameraCreate(BaseModel):
     ip_address: str
     port: int = 554
     description: Optional[str] = None
+    map_latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    map_longitude: Optional[float] = Field(default=None, ge=-180, le=180)
 
 class CameraUpdate(BaseModel):
     name:        Optional[str] = None
@@ -129,6 +137,8 @@ class CameraUpdate(BaseModel):
     port:        Optional[int] = None
     description: Optional[str] = None
     status:      Optional[str] = None
+    map_latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    map_longitude: Optional[float] = Field(default=None, ge=-180, le=180)
 
 @app.get("/api/cameras/")
 async def list_cameras(db=Depends(get_db), _=Depends(get_current_user)):
@@ -138,16 +148,16 @@ async def list_cameras(db=Depends(get_db), _=Depends(get_current_user)):
 @app.post("/api/cameras/", status_code=201)
 async def create_camera(body: CameraCreate, db=Depends(get_db), _=Depends(captain_only)):
     doc = {"id": str(uuid.uuid4()), "status": "active",
-           "created_at": datetime.utcnow().isoformat(), **body.dict()}
+        "created_at": datetime.utcnow().isoformat(), **body.model_dump()}
     await db.cameras.insert_one(doc)
     return clean(doc)
 
 @app.put("/api/cameras/{camera_id}")
 async def update_camera(camera_id: str, body: CameraUpdate, db=Depends(get_db), _=Depends(captain_only)):
-    update = {k: v for k, v in body.dict().items() if v is not None}
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     update["updated_at"] = datetime.utcnow().isoformat()
     result = await db.cameras.find_one_and_update(
-        {"id": camera_id}, {"$set": update}, return_document=True)
+        {"id": camera_id}, {"$set": update}, return_document=ReturnDocument.AFTER)
     if not result:
         raise HTTPException(404, "Camera not found")
     return clean(result)
@@ -240,6 +250,7 @@ class UserCreate(BaseModel):
     password:     str
 
 class UserUpdate(BaseModel):
+    username:     Optional[str] = None
     full_name:    Optional[str] = None
     email:        Optional[str] = None
     phone_number: Optional[str] = None
@@ -268,12 +279,28 @@ async def create_user(body: UserCreate, db=Depends(get_db), _=Depends(captain_on
 
 @app.put("/api/users/{user_id}")
 async def update_user(user_id: str, body: UserUpdate, db=Depends(get_db), _=Depends(captain_only)):
-    update = {k: v for k, v in body.dict().items() if v is not None}
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+
+    # Prevent duplicate username/email when updating an existing account.
+    duplicate_checks = []
+    if "username" in update:
+        duplicate_checks.append({"username": update["username"]})
+    if "email" in update:
+        duplicate_checks.append({"email": update["email"]})
+    if duplicate_checks:
+        duplicate = await db.users.find_one({"id": {"$ne": user_id}, "$or": duplicate_checks})
+        if duplicate:
+            raise HTTPException(400, "Username or email already exists")
+
     if "password" in update:
-        update["hashed_password"] = hash_pw(update.pop("password"))
+        if update["password"]:
+            update["hashed_password"] = hash_pw(update.pop("password"))
+        else:
+            update.pop("password")
+
     update["updated_at"] = datetime.utcnow().isoformat()
     result = await db.users.find_one_and_update(
-        {"id": user_id}, {"$set": update}, return_document=True)
+        {"id": user_id}, {"$set": update}, return_document=ReturnDocument.AFTER)
     if not result:
         raise HTTPException(404, "User not found")
     return clean(dict(result))
