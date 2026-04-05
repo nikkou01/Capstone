@@ -29,8 +29,25 @@ if errorlevel 1 (
 )
 
 echo.
+choice /C YN /N /M "[Optional] Reset MongoDB database to clean state now? [Y/N]: "
+if errorlevel 2 goto skipdbreset
+
+echo.
+echo Resetting database...
+"%~dp0backend\.venv\Scripts\python.exe" "%~dp0backend\reset_db.py" --yes
+if errorlevel 1 (
+    echo WARNING: Database reset failed. Make sure MongoDB is running, then run reset-db.bat.
+) else (
+    echo Database reset completed.
+)
+
+:skipdbreset
+
+echo.
 echo =========================================
 echo   Setup complete!
 echo   Run start-all.bat to launch the app.
+echo   Optional: run reset-db.bat anytime for a clean database.
+echo   See README.md for the another-device setup checklist.
 echo =========================================
 pause
