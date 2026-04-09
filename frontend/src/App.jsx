@@ -203,27 +203,70 @@ function Shell({ user, onLogout }) {
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 function AppInner() {
-  const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('safesight_user')) } catch { return null }
-  })
+  const [user, setUser] = useState(null)
+  const [authReady, setAuthReady] = useState(false)
 
   function handleLogin(me) {
     localStorage.setItem('safesight_user', JSON.stringify(me))
     setUser(me)
+    setAuthReady(true)
   }
 
   function handleLogout() {
     apiLogout()
     localStorage.removeItem('safesight_user')
     setUser(null)
+    setAuthReady(true)
   }
 
-  // Validate token on mount
+  // Validate the token before showing protected pages.
   useEffect(() => {
-    if (user && localStorage.getItem('token')) {
-      fetchMe().catch(() => handleLogout())
+    let mounted = true
+
+    async function bootstrapAuth() {
+      const token = localStorage.getItem('token')
+
+      if (!token) {
+        localStorage.removeItem('safesight_user')
+        if (mounted) {
+          setUser(null)
+          setAuthReady(true)
+        }
+        return
+      }
+
+      try {
+        const me = await fetchMe()
+        if (!mounted) return
+        localStorage.setItem('safesight_user', JSON.stringify(me))
+        setUser(me)
+      } catch {
+        apiLogout()
+        localStorage.removeItem('safesight_user')
+        if (!mounted) return
+        setUser(null)
+      } finally {
+        if (mounted) setAuthReady(true)
+      }
+    }
+
+    bootstrapAuth()
+
+    return () => {
+      mounted = false
     }
   }, [])
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen gradient-bg flex items-center justify-center px-4">
+        <div className="glass rounded-xl px-6 py-4 text-slate-100 text-sm sm:text-base">
+          <i className="fas fa-spinner fa-spin mr-2" />
+          Checking session...
+        </div>
+      </div>
+    )
+  }
 
   return user ? <Shell user={user} onLogout={handleLogout} /> : <Login onLogin={handleLogin} />
 }
