@@ -1,4 +1,4 @@
-# SafeCCTV
+# SafeSight
 
 ## Pull On Another Device (Clean And Ready)
 
@@ -24,7 +24,7 @@ Use this checklist after cloning the repo on a different PC.
 
 ## Important Notes
 
-- On first run, MongoDB creates database `safecctv` automatically when the backend inserts initial data.
+- On first run, MongoDB creates database `safesight` automatically when the backend inserts initial data.
 - Backend startup auto-creates the default captain account if none exists.
 - Default login:
   - Username: `captain`

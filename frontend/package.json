@@ -1,5 +1,5 @@
 {
-  "name": "safecctv-frontend",
+  "name": "safesight-frontend",
   "version": "1.0.0",
   "type": "module",
   "main": "electron/main.cjs",

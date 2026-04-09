@@ -12,8 +12,8 @@ import Analytics from './pages/Analytics'
 
 // ── Login Page ────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
-  const [username, setUsername] = useState('captain')
-  const [password, setPassword] = useState('password')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const notify = useNotif()
@@ -106,11 +106,6 @@ function Login({ onLogin }) {
                 {loading ? 'Signing in…' : 'Sign In'}
               </button>
             </form>
-
-            <div className="mt-6 p-4 bg-white/5 rounded-lg border border-white/10 text-center text-sm text-slate-400">
-              <p className="mb-1">Demo Credentials:</p>
-              <p className="text-emerald-300"><strong>captain</strong> / <strong>password</strong></p>
-            </div>
           </div>
         </div>
       </div>
@@ -209,17 +204,17 @@ function Shell({ user, onLogout }) {
 // ── Root ──────────────────────────────────────────────────────────────────────
 function AppInner() {
   const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('safecctv_user')) } catch { return null }
+    try { return JSON.parse(localStorage.getItem('safesight_user')) } catch { return null }
   })
 
   function handleLogin(me) {
-    localStorage.setItem('safecctv_user', JSON.stringify(me))
+    localStorage.setItem('safesight_user', JSON.stringify(me))
     setUser(me)
   }
 
   function handleLogout() {
     apiLogout()
-    localStorage.removeItem('safecctv_user')
+    localStorage.removeItem('safesight_user')
     setUser(null)
   }
 

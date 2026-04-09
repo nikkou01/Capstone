@@ -24,7 +24,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MONGO_URL   = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-DB_NAME     = os.getenv("DB_NAME", "safecctv")
+DB_NAME     = os.getenv("DB_NAME", "safesight")
 SECRET_KEY  = os.getenv("SECRET_KEY", "changeme-in-production")
 ALGORITHM   = "HS256"
 TOKEN_EXP   = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
@@ -507,7 +507,7 @@ async def ensure_default_captain(db):
     if not await db.users.find_one({"role": "captain"}):
         await db.users.insert_one({
             "id": str(uuid.uuid4()), "username": "captain",
-            "email": "captain@safecctv.local", "full_name": "Barangay Captain",
+            "email": "captain@safesight.local", "full_name": "Barangay Captain",
             "role": "captain", "phone_number": "+639123456789",
             "is_active": True, "hashed_password": hash_pw("password"),
             "created_at": datetime.utcnow().isoformat()
@@ -933,4 +933,4 @@ async def dashboard_stats(db=Depends(get_db), _=Depends(get_current_user)):
 # ══════════════════════════════════════════════════════════════════════════════
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "service": "SafeCCTV API"}
+    return {"status": "ok", "service": "SafeSight API"}

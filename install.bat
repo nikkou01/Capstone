@@ -1,6 +1,6 @@
 @echo off
 echo =========================================
-echo   SafeCCTV - First-Time Setup
+echo   SafeSight - First-Time Setup
 echo =========================================
 
 echo.

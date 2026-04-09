@@ -8,7 +8,7 @@ from pymongo import MongoClient
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Reset the SafeCCTV MongoDB database.")
+    parser = argparse.ArgumentParser(description="Reset the SafeSight MongoDB database.")
     parser.add_argument(
         "--yes",
         action="store_true",
@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     load_dotenv(Path(__file__).parent / ".env")
     mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-    db_name = os.getenv("DB_NAME", "safecctv")
+    db_name = os.getenv("DB_NAME", "safesight")
 
     args = parse_args()
     if not args.yes:
