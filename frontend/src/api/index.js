@@ -1,6 +1,9 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: '/api' })
+const isDesktopFileMode = typeof window !== 'undefined' && window.location.protocol === 'file:'
+const apiBaseURL = isDesktopFileMode ? 'http://127.0.0.1:8000/api' : '/api'
+
+const api = axios.create({ baseURL: apiBaseURL })
 
 // Attach token automatically
 api.interceptors.request.use(cfg => {
@@ -41,11 +44,16 @@ export async function fetchCameras()          { const { data } = await api.get('
 export async function createCamera(body)      { const { data } = await api.post('/cameras/', body);       return data }
 export async function updateCamera(id, body)  { const { data } = await api.put(`/cameras/${id}`, body);   return data }
 export async function deleteCamera(id)        { const { data } = await api.delete(`/cameras/${id}`);      return data }
+export async function fetchCameraSnapshotBlob(id) { const { data } = await api.get(`/cameras/${id}/snapshot`, { responseType: 'blob' }); return data }
 export async function mockCollision(cameraId) { const { data } = await api.post(`/collisions/mock-detection?camera_id=${cameraId}`); return data }
 
 // ── Collisions ────────────────────────────────────────────────────────────────
 export async function fetchCollisions()        { const { data } = await api.get('/collisions/');                              return data }
 export async function acknowledgeCollision(id) { const { data } = await api.put(`/collisions/${id}`, { status: 'acknowledged' }); return data }
+export async function fetchCollisionVideoBlob(id) {
+  const { data } = await api.get(`/collisions/${id}/video`, { responseType: 'blob' })
+  return data
+}
 
 // ── Users ─────────────────────────────────────────────────────────────────────
 export async function fetchUsers()         { const { data } = await api.get('/users/');              return data }
@@ -55,3 +63,4 @@ export async function deleteUser(id)       { const { data } = await api.delete(`
 
 // ── Alerts ────────────────────────────────────────────────────────────────────
 export async function fetchAlerts() { const { data } = await api.get('/alerts/'); return data }
+export async function sendTestSmsAlert(body = {}) { const { data } = await api.post('/alerts/test-sms', body); return data }

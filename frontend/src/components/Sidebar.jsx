@@ -1,4 +1,5 @@
 export default function Sidebar({ page, setPage, user, onLogout, allowedPages = [] }) {
+  const logoSrc = `${import.meta.env.BASE_URL}logo.png`
   const nav = [
     { id: 'dashboard',   icon: 'fa-tachometer-alt', label: 'Dashboard'         },
     { id: 'cameraLocations', icon: 'fa-map-marker-alt', label: 'Camera Locations' },
@@ -6,6 +7,7 @@ export default function Sidebar({ page, setPage, user, onLogout, allowedPages = 
     { id: 'collisions',  icon: 'fa-exclamation-triangle', label: 'Collision Logs' },
     { id: 'users',       icon: 'fa-users',           label: 'User Management'   },
     { id: 'alerts',      icon: 'fa-bell',            label: 'Alert History'     },
+    { id: 'analytics',   icon: 'fa-chart-line',      label: 'Analytics'         },
   ]
   const visibleNav = allowedPages.length ? nav.filter(item => allowedPages.includes(item.id)) : nav
 
@@ -13,10 +15,10 @@ export default function Sidebar({ page, setPage, user, onLogout, allowedPages = 
     .split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
 
   return (
-    <div className="sidebar w-64 flex-shrink-0 p-6 flex flex-col">
+    <div className="sidebar fixed inset-y-0 left-0 z-30 w-64 p-6 flex flex-col overflow-y-auto">
       {/* Logo */}
       <div className="flex items-center space-x-3 mb-8">
-        <img src="/logo.png" alt="SafeSight" className="h-10 w-auto" />
+        <img src={logoSrc} alt="SafeSight" className="h-10 w-auto" />
         <div>
           <h1 className="text-xl font-bold text-white">SafeSight</h1>
           <p className="text-emerald-100 text-xs">Surveillance System</p>

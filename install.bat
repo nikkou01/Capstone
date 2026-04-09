@@ -29,25 +29,33 @@ if errorlevel 1 (
 )
 
 echo.
-choice /C YN /N /M "[Optional] Reset MongoDB database to clean state now? [Y/N]: "
-if errorlevel 2 goto skipdbreset
-
-echo.
-echo Resetting database...
-"%~dp0backend\.venv\Scripts\python.exe" "%~dp0backend\reset_db.py" --yes
+echo [Optional] Checking MongoDB service...
+sc query MongoDB >nul 2>nul
 if errorlevel 1 (
-    echo WARNING: Database reset failed. Make sure MongoDB is running, then run reset-db.bat.
+    echo WARNING: MongoDB service 'MongoDB' was not found.
+    echo Install MongoDB Community Server if it is not installed yet.
 ) else (
-    echo Database reset completed.
+    sc query MongoDB | find "RUNNING" >nul
+    if errorlevel 1 (
+        echo MongoDB is not running. Attempting to start service...
+        net start MongoDB >nul 2>nul
+        if errorlevel 1 (
+            echo WARNING: Could not start MongoDB automatically.
+            echo Start MongoDB manually before launching SafeSight.
+        ) else (
+            echo MongoDB service started.
+        )
+    ) else (
+        echo MongoDB service is already running.
+    )
 )
-
-:skipdbreset
 
 echo.
 echo =========================================
 echo   Setup complete!
-echo   Run start-all.bat to launch the app.
-echo   Optional: run reset-db.bat anytime for a clean database.
+echo   Run SafeSight.bat to launch the app.
+echo   Database is created automatically on first run.
+echo   Default login is auto-created: captain / password
 echo   See README.md for the another-device setup checklist.
 echo =========================================
 pause

@@ -1,17 +1,43 @@
 import { useEffect, useState } from 'react'
-import { fetchAlerts } from '../api'
+import { fetchAlerts, sendTestSmsAlert } from '../api'
 
-export default function Alerts({ notify }) {
+export default function Alerts({ user, notify }) {
   const [alerts,  setAlerts]  = useState([])
   const [loading, setLoading] = useState(true)
   const [filter,  setFilter]  = useState('all')
+  const [sendingTest, setSendingTest] = useState(false)
+
+  const isCaptain = user?.role === 'captain'
+
+  async function loadAlerts() {
+    setLoading(true)
+    try {
+      const rows = await fetchAlerts()
+      setAlerts(rows)
+    } catch {
+      notify('Failed to load alerts.', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    fetchAlerts()
-      .then(setAlerts)
-      .catch(() => notify('Failed to load alerts.', 'error'))
-      .finally(() => setLoading(false))
+    loadAlerts()
   }, [])
+
+  async function handleSendTestSms() {
+    setSendingTest(true)
+    try {
+      const result = await sendTestSmsAlert()
+      const toastType = result.failed > 0 ? 'warning' : 'success'
+      notify(`Test SMS done: ${result.sent} sent, ${result.failed} failed.`, toastType)
+      await loadAlerts()
+    } catch (err) {
+      notify(err?.response?.data?.detail || 'Failed to send test SMS.', 'error')
+    } finally {
+      setSendingTest(false)
+    }
+  }
 
   const filtered = filter === 'all' ? alerts : alerts.filter(a => a.status === filter)
 
@@ -19,7 +45,17 @@ export default function Alerts({ notify }) {
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
       <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between flex-wrap gap-3">
         <h3 className="text-lg font-medium text-gray-900">SMS Alert History</h3>
-        <div className="flex space-x-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isCaptain && (
+            <button
+              onClick={handleSendTestSms}
+              disabled={sendingTest}
+              className="px-3 py-1.5 rounded text-xs font-medium transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              <i className="fas fa-paper-plane mr-1" />
+              {sendingTest ? 'Sending Test SMS...' : 'Send Test SMS'}
+            </button>
+          )}
           {['all', 'sent', 'failed', 'pending'].map(f => (
             <button key={f} onClick={() => setFilter(f)}
               className={`px-3 py-1.5 rounded text-xs font-medium capitalize transition-colors
@@ -52,7 +88,7 @@ export default function Alerts({ notify }) {
                     ${a.status === 'sent'    ? 'text-green-900'
                     : a.status === 'failed' ? 'text-red-900'
                     : 'text-yellow-900'}`}>
-                    Collision Alert → {a.recipient_name}
+                    {a.is_test ? 'Test SMS Alert' : 'Collision Alert'} → {a.recipient_name}
                   </p>
                   <p className="text-xs text-gray-600 mt-0.5">{a.recipient_phone}</p>
                   <p className="text-xs text-gray-500 mt-1 truncate">{a.message}</p>

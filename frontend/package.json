@@ -2,15 +2,19 @@
   "name": "safecctv-frontend",
   "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev":     "vite",
     "build":   "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop": "electron electron/main.cjs",
+    "desktop:build": "npm run build && electron-builder --win"
   },
   "dependencies": {
     "react":           "^18.2.0",
     "react-dom":       "^18.2.0",
     "react-router-dom":"^6.22.0",
+    "recharts":        "^2.13.0",
     "axios":           "^1.6.7",
     "leaflet":         "^1.9.4",
     "react-leaflet":   "^4.2.1"
@@ -20,6 +24,36 @@
     "vite":                 "^5.1.4",
     "tailwindcss":          "^3.4.1",
     "autoprefixer":         "^10.4.18",
-    "postcss":              "^8.4.35"
+    "postcss":              "^8.4.35",
+    "electron":             "^32.2.0",
+    "electron-builder":     "^24.13.3",
+    "wait-on":              "^7.2.0"
+  },
+  "build": {
+    "appId": "com.safesight.desktop",
+    "productName": "SafeSight",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!__pycache__/**/*",
+          "!*.pyc"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/safesight_logo_all_white.png"
+    }
   }
 }

@@ -8,6 +8,7 @@ import Cameras from './pages/Cameras'
 import Collisions from './pages/Collisions'
 import Users from './pages/Users'
 import Alerts from './pages/Alerts'
+import Analytics from './pages/Analytics'
 
 // ── Login Page ────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
@@ -16,6 +17,7 @@ function Login({ onLogin }) {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
   const notify = useNotif()
+  const logoSrc = `${import.meta.env.BASE_URL}logo.png`
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -41,7 +43,7 @@ function Login({ onLogin }) {
         <div className="text-white space-y-6">
           <div className="space-y-4">
             <div className="flex items-center space-x-3 -ml-2">
-              <img src="/logo.png" alt="SafeSight" className="h-24 w-auto flex-shrink-0" />
+              <img src={logoSrc} alt="SafeSight" className="h-24 w-auto flex-shrink-0" />
               <h1 className="text-4xl lg:text-6xl font-bold">
                 Safe<span className="text-emerald-400">Sight</span>
               </h1>
@@ -70,7 +72,7 @@ function Login({ onLogin }) {
         <div className="w-full max-w-md mx-auto">
           <div className="glass rounded-2xl p-8 shadow-2xl">
             <div className="text-center mb-8">
-              <img src="/logo.png" alt="SafeSight" className="h-24 w-auto mx-auto mb-4" />
+              <img src={logoSrc} alt="SafeSight" className="h-24 w-auto mx-auto mb-4" />
               <h2 className="text-2xl font-bold text-white mb-2">Welcome Back</h2>
               <p className="text-slate-300">Sign in to your surveillance dashboard</p>
             </div>
@@ -124,6 +126,7 @@ const PAGE_META = {
   collisions: { title: 'Collision Logs',    subtitle: 'View detailed collision detection events' },
   users:      { title: 'User Management',   subtitle: 'Manage system users and permissions' },
   alerts:     { title: 'Alert History',     subtitle: 'View SMS alert delivery history' },
+  analytics:  { title: 'Analytics',         subtitle: 'Analyze monthly incident trends and camera hotspots' },
 }
 
 const PAGES = {
@@ -133,22 +136,34 @@ const PAGES = {
   collisions: Collisions,
   users: Users,
   alerts: Alerts,
+  analytics: Analytics,
 }
-const CAPTAIN_PAGES = ['dashboard', 'cameraLocations', 'cameras', 'collisions', 'users', 'alerts']
-const RESPONDER_PAGES = ['dashboard', 'cameraLocations', 'collisions', 'alerts']
+const CAPTAIN_PAGES = ['dashboard', 'cameraLocations', 'cameras', 'collisions', 'users', 'alerts', 'analytics']
+const RESPONDER_PAGES = ['dashboard', 'cameraLocations', 'collisions', 'alerts', 'analytics']
 
 function Shell({ user, onLogout }) {
   const [page, setPage] = useState('dashboard')
-  const [time, setTime] = useState(new Date().toLocaleString())
+  const [now, setNow] = useState(() => new Date())
   const notify = useNotif()
   const isCaptain = String(user?.role || '').toLowerCase() === 'captain'
   const allowedPages = isCaptain ? CAPTAIN_PAGES : RESPONDER_PAGES
   const safePage = allowedPages.includes(page) ? page : 'dashboard'
   const meta = PAGE_META[safePage]
   const PageComponent = PAGES[safePage]
+  const formattedDate = now.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+  const formattedTime = now.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 
   useEffect(() => {
-    const t = setInterval(() => setTime(new Date().toLocaleString()), 1000)
+    const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
 
@@ -157,7 +172,7 @@ function Shell({ user, onLogout }) {
   }, [page, allowedPages])
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="h-screen bg-gray-50 overflow-hidden">
       <Sidebar
         page={safePage}
         setPage={setPage}
@@ -165,17 +180,27 @@ function Shell({ user, onLogout }) {
         onLogout={onLogout}
         allowedPages={allowedPages}
       />
-      <div className="flex-1 p-6 min-w-0">
-        <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">{meta.title}</h1>
-            <p className="text-gray-600">{meta.subtitle}</p>
-          </div>
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-600">{time}</span>
+      <div className="ml-64 h-screen min-w-0 overflow-y-auto">
+        <div className="sticky top-0 z-20 border-b border-gray-200 bg-gray-50/95 backdrop-blur px-6 py-5">
+          <div className="flex items-start justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">{meta.title}</h1>
+              <p className="text-gray-600">{meta.subtitle}</p>
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-sm">
+              <div className="h-9 w-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <i className="fas fa-clock" />
+              </div>
+              <div className="text-right leading-tight">
+                <p className="text-xs font-medium text-gray-500">{formattedDate}</p>
+                <p className="text-sm font-semibold text-gray-900 tabular-nums tracking-wide">{formattedTime}</p>
+              </div>
+            </div>
           </div>
         </div>
-        <PageComponent user={user} notify={notify} />
+        <div className="p-6">
+          <PageComponent user={user} notify={notify} onNavigate={setPage} />
+        </div>
       </div>
     </div>
   )
