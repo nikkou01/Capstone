@@ -29,8 +29,9 @@ Use this checklist after cloning the repo on a different PC.
 - Default login:
   - Username: `captain`
   - Password: `password`
-- `backend/.env` is local-only (gitignored). On another desktop, copy your own env values if you use custom settings.
-- YOLO model files (`*.pt`) are not tracked. Put your model at `backend/models/best.pt` (or set a custom `DETECTION_MODEL_PATH`).
+- `backend/.env` is local-only (gitignored), but setup now auto-creates it from `backend/.env.example` if missing.
+- Default detection model `backend/models/best.pt` is included in the repository.
+- If you need custom secrets or provider settings, edit `backend/.env` after running setup.
 
 ## SMS API Integration
 
@@ -104,9 +105,8 @@ You can run a custom YOLO `.pt` model (for example `best.pt`) directly on live c
 
 ### 1) Put your model file in the project
 
-- Place your model in `backend/models` as `best.pt`
-  - Example path: `safecctv/backend/models/best.pt`
-- Or use a custom path by setting `DETECTION_MODEL_PATH` in `backend/.env`.
+- `backend/models/best.pt` is included by default, so no extra copy step is required on a fresh clone.
+- To use a different model, replace `backend/models/best.pt` or set a custom `DETECTION_MODEL_PATH` in `backend/.env`.
 
 ### 2) Enable detector settings in `backend/.env`
 

@@ -1,43 +1,89 @@
 @echo off
+setlocal
+
+set "ROOT=%~dp0"
+set "BACKEND_DIR=%ROOT%backend"
+set "FRONTEND_DIR=%ROOT%frontend"
+set "BACKEND_VENV=%BACKEND_DIR%\.venv"
+set "BACKEND_PYTHON=%BACKEND_VENV%\Scripts\python.exe"
+set "BACKEND_ENV_FILE=%BACKEND_DIR%\.env"
+set "BACKEND_ENV_TEMPLATE=%BACKEND_DIR%\.env.example"
+
 echo =========================================
 echo   SafeSight - First-Time Setup
 echo =========================================
 
-echo.
-echo [1/3] Creating Python virtual environment...
-python -m venv "%~dp0backend\.venv"
+where python >nul 2>nul
 if errorlevel 1 (
-    echo ERROR: Python not found. Please install Python 3.10+ and try again.
+    echo ERROR: Python is not installed or not in PATH.
+    echo Install Python 3.10+ and try again.
+    pause & exit /b 1
+)
+
+where npm >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: npm is not installed or not in PATH.
+    echo Install Node.js (with npm) and try again.
     pause & exit /b 1
 )
 
 echo.
-echo [2/3] Installing backend dependencies...
-"%~dp0backend\.venv\Scripts\pip.exe" install -r "%~dp0backend\requirements.txt"
+echo [1/5] Creating Python virtual environment...
+if not exist "%BACKEND_PYTHON%" (
+    python -m venv "%BACKEND_VENV%"
+    if errorlevel 1 (
+        echo ERROR: Failed to create backend virtual environment.
+        pause & exit /b 1
+    )
+) else (
+    echo Backend virtual environment already exists.
+)
+
+echo.
+echo [2/5] Installing backend dependencies...
+"%BACKEND_PYTHON%" -m pip install --disable-pip-version-check -r "%BACKEND_DIR%\requirements.txt"
 if errorlevel 1 (
     echo ERROR: Failed to install backend dependencies.
     pause & exit /b 1
 )
 
-if not exist "%~dp0backend\models" mkdir "%~dp0backend\models"
-if not exist "%~dp0backend\models\best.pt" (
+echo.
+echo [3/5] Preparing backend configuration...
+if not exist "%BACKEND_ENV_FILE%" (
+    if exist "%BACKEND_ENV_TEMPLATE%" (
+        copy /Y "%BACKEND_ENV_TEMPLATE%" "%BACKEND_ENV_FILE%" >nul
+        if errorlevel 1 (
+            echo ERROR: Failed to create backend\.env from template.
+            pause & exit /b 1
+        )
+        echo Created backend\.env from backend\.env.example.
+    ) else (
+        echo WARNING: backend\.env.example is missing.
+        echo Create backend\.env manually before launching SafeSight.
+    )
+) else (
+    echo backend\.env already exists.
+)
+
+if not exist "%BACKEND_DIR%\models" mkdir "%BACKEND_DIR%\models"
+if not exist "%BACKEND_DIR%\models\best.pt" (
     echo.
     echo WARNING: YOLO model file not found at backend\models\best.pt
-    echo Detection can still run if disabled in backend\.env.
-    echo To enable live AI detection, place your model file in backend\models.
+    echo Collision detection will stay disabled until the model file is available.
+    echo If this is a fresh clone, pull latest changes or copy best.pt to backend\models.
 )
 
 echo.
-echo [3/3] Installing frontend dependencies...
-cd /d "%~dp0frontend"
-npm install
+echo [4/5] Installing frontend dependencies...
+cd /d "%FRONTEND_DIR%"
+call npm install
 if errorlevel 1 (
     echo ERROR: Failed to install frontend dependencies. Make sure Node.js is installed.
     pause & exit /b 1
 )
 
 echo.
-echo [Optional] Checking MongoDB service...
+echo [5/5] Checking MongoDB service...
 sc query MongoDB >nul 2>nul
 if errorlevel 1 (
     echo WARNING: MongoDB service 'MongoDB' was not found.
@@ -66,4 +112,5 @@ echo   Database is created automatically on first run.
 echo   Default login is auto-created: captain / password
 echo   See README.md for the another-device setup checklist.
 echo =========================================
+endlocal
 pause

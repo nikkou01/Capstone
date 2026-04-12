@@ -5,6 +5,8 @@ set "ROOT=%~dp0"
 set "BACKEND_DIR=%ROOT%backend"
 set "FRONTEND_DIR=%ROOT%frontend"
 set "BACKEND_PYTHON=%BACKEND_DIR%\.venv\Scripts\python.exe"
+set "BACKEND_ENV_FILE=%BACKEND_DIR%\.env"
+set "BACKEND_ENV_TEMPLATE=%BACKEND_DIR%\.env.example"
 
 if not exist "%BACKEND_PYTHON%" (
     echo ERROR: Backend virtual environment is missing.
@@ -24,6 +26,29 @@ if errorlevel 1 (
 echo =========================================
 echo   SafeSight - Desktop Mode
 echo =========================================
+
+if not exist "%BACKEND_ENV_FILE%" (
+    if exist "%BACKEND_ENV_TEMPLATE%" (
+        copy /Y "%BACKEND_ENV_TEMPLATE%" "%BACKEND_ENV_FILE%" >nul
+        if errorlevel 1 (
+            echo ERROR: Failed to create backend\.env from template.
+            pause
+            exit /b 1
+        )
+        echo Created backend\.env from backend\.env.example.
+    ) else (
+        echo ERROR: backend\.env is missing and backend\.env.example was not found.
+        echo Run install.bat or restore backend\.env.example.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "%BACKEND_DIR%\models\best.pt" (
+    echo WARNING: backend\models\best.pt was not found.
+    echo Live AI collision detection may stay disabled until the model exists.
+)
+
 echo Ensuring MongoDB service is running...
 
 sc query MongoDB >nul 2>nul

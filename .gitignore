@@ -15,4 +15,5 @@ Thumbs.db
 
 # Local model and CCTV test artifacts
 backend/models/*.pt
+!backend/models/best.pt
 tools/CCTV/myvenv/
