@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { fetchCameras, createCamera, updateCamera, deleteCamera } from '../api'
+import { fetchCameras, createCamera, updateCamera, reconnectCamera, deleteCamera } from '../api'
 
-const EMPTY = { name: '', location: '', rtsp_url: '', ip_address: '', port: 554, description: '' }
+const EMPTY = { name: '', location: '', rtsp_url: '', description: '' }
 
 export default function Cameras({ user, notify }) {
   const [cameras,  setCameras]  = useState([])
@@ -10,6 +10,7 @@ export default function Cameras({ user, notify }) {
   const [form,     setForm]     = useState(EMPTY)
   const [editId,   setEditId]   = useState(null)
   const [saving,   setSaving]   = useState(false)
+  const [actionBusyById, setActionBusyById] = useState({})
   const isCaptain = user?.role === 'captain'
 
   async function load() {
@@ -24,9 +25,13 @@ export default function Cameras({ user, notify }) {
 
   useEffect(() => { load() }, [])
 
+  function getErrorDetail(err, fallback) {
+    return err?.response?.data?.detail || fallback
+  }
+
   function openAdd()      { setForm(EMPTY); setEditId(null); setModal('add') }
   function openEdit(cam)  { setForm({ name: cam.name, location: cam.location, rtsp_url: cam.rtsp_url,
-    ip_address: cam.ip_address, port: cam.port, description: cam.description || '' });
+    description: cam.description || '' });
     setEditId(cam.id); setModal('edit') }
   function closeModal()   { setModal(false); setEditId(null); setForm(EMPTY) }
 
@@ -44,8 +49,47 @@ export default function Cameras({ user, notify }) {
       closeModal()
       load()
     } catch (err) {
-      notify(err?.response?.data?.detail || 'Failed to save camera.', 'error')
+      notify(getErrorDetail(err, 'Failed to save camera.'), 'error')
     } finally { setSaving(false) }
+  }
+
+  async function runRowAction(cameraId, work) {
+    setActionBusyById(prev => ({ ...prev, [cameraId]: true }))
+    try {
+      await work()
+    } finally {
+      setActionBusyById(prev => {
+        const next = { ...prev }
+        delete next[cameraId]
+        return next
+      })
+    }
+  }
+
+  async function handleDisable(camera) {
+    if (!confirm(`Disable ${camera.name}?`)) return
+
+    await runRowAction(camera.id, async () => {
+      try {
+        await updateCamera(camera.id, { status: 'inactive' })
+        notify('Camera disabled.', 'success')
+        await load()
+      } catch (err) {
+        notify(getErrorDetail(err, 'Failed to disable camera.'), 'error')
+      }
+    })
+  }
+
+  async function handleReconnect(camera) {
+    await runRowAction(camera.id, async () => {
+      try {
+        await reconnectCamera(camera.id)
+        notify('Camera reconnected and enabled.', 'success')
+        await load()
+      } catch (err) {
+        notify(getErrorDetail(err, 'Failed to reconnect camera.'), 'error')
+      }
+    })
   }
 
   async function handleDelete(id) {
@@ -63,6 +107,7 @@ export default function Cameras({ user, notify }) {
     active:      'bg-green-100 text-green-800',
     inactive:    'bg-gray-100 text-gray-800',
     maintenance: 'bg-yellow-100 text-yellow-800',
+    failed:      'bg-red-100 text-red-800',
     error:       'bg-red-100 text-red-800',
   }
 
@@ -99,7 +144,12 @@ export default function Cameras({ user, notify }) {
                   <div>
                     <h4 className="font-medium text-gray-900">{cam.name}</h4>
                     <p className="text-sm text-gray-600">{cam.location}</p>
-                    <p className="text-xs text-gray-400">{cam.ip_address}:{cam.port}</p>
+                    <p className="text-xs text-gray-400">
+                      Stream source: {cam.rtsp_url ? 'Configured (private)' : 'Not configured'}
+                    </p>
+                    {cam.status === 'failed' && cam.last_stream_error && (
+                      <p className="text-xs text-red-600 mt-1">{cam.last_stream_error}</p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
@@ -108,12 +158,32 @@ export default function Cameras({ user, notify }) {
                   </span>
                   {isCaptain && (
                     <>
+                      {cam.status === 'active' && (
+                        <button
+                          onClick={() => handleDisable(cam)}
+                          disabled={!!actionBusyById[cam.id]}
+                          className="px-3 py-1.5 bg-gray-700 hover:bg-gray-800 text-white rounded text-xs disabled:opacity-50"
+                        >
+                          Disable
+                        </button>
+                      )}
+                      {(cam.status === 'inactive' || cam.status === 'failed' || cam.status === 'error') && (
+                        <button
+                          onClick={() => handleReconnect(cam)}
+                          disabled={!!actionBusyById[cam.id]}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs disabled:opacity-50"
+                        >
+                          {cam.status === 'inactive' ? 'Enable' : 'Reconnect'}
+                        </button>
+                      )}
                       <button onClick={() => openEdit(cam)}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs">
+                        disabled={!!actionBusyById[cam.id]}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs disabled:opacity-50">
                         Edit
                       </button>
                       <button onClick={() => handleDelete(cam.id)}
-                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs">
+                        disabled={!!actionBusyById[cam.id]}
+                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs disabled:opacity-50">
                         Delete
                       </button>
                     </>
@@ -139,14 +209,12 @@ export default function Cameras({ user, notify }) {
                 { label: 'Camera Name',  key: 'name',        type: 'text',   req: true  },
                 { label: 'Location',     key: 'location',    type: 'text',   req: true  },
                 { label: 'RTSP URL',     key: 'rtsp_url',    type: 'text',   req: true  },
-                { label: 'IP Address',   key: 'ip_address',  type: 'text',   req: true  },
-                { label: 'Port',         key: 'port',        type: 'number', req: false },
                 { label: 'Description',  key: 'description', type: 'text',   req: false },
               ].map(f => (
                 <div key={f.key}>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{f.label}</label>
                   <input type={f.type} required={f.req} value={form[f.key]}
-                    onChange={e => setForm(p => ({ ...p, [f.key]: f.type === 'number' ? +e.target.value : e.target.value }))}
+                    onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
                 </div>
               ))}

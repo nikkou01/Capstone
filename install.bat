@@ -19,6 +19,14 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
+if not exist "%~dp0backend\models" mkdir "%~dp0backend\models"
+if not exist "%~dp0backend\models\best.pt" (
+    echo.
+    echo WARNING: YOLO model file not found at backend\models\best.pt
+    echo Detection can still run if disabled in backend\.env.
+    echo To enable live AI detection, place your model file in backend\models.
+)
+
 echo.
 echo [3/3] Installing frontend dependencies...
 cd /d "%~dp0frontend"

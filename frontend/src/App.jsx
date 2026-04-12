@@ -3,6 +3,7 @@ import { login, fetchMe, logout as apiLogout } from './api'
 import { NotifProvider, useNotif } from './context/NotifContext'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
+import CameraDashboard from './pages/CameraDashboard'
 import CameraLocations from './pages/CameraLocations'
 import Cameras from './pages/Cameras'
 import Collisions from './pages/Collisions'
@@ -116,6 +117,7 @@ function Login({ onLogin }) {
 // ── Main Shell ────────────────────────────────────────────────────────────────
 const PAGE_META = {
   dashboard:  { title: 'Dashboard',         subtitle: 'Monitor your surveillance system and collision detection alerts' },
+  cameraDashboard: { title: 'Camera Dashboard', subtitle: 'View all CCTV live outputs and camera stream health' },
   cameraLocations: { title: 'Camera Locations', subtitle: 'Assign and view map pinpoints for every camera' },
   cameras:    { title: 'Camera Management', subtitle: 'Manage and monitor your CCTV cameras' },
   collisions: { title: 'Collision Logs',    subtitle: 'View detailed collision detection events' },
@@ -126,6 +128,7 @@ const PAGE_META = {
 
 const PAGES = {
   dashboard: Dashboard,
+  cameraDashboard: CameraDashboard,
   cameraLocations: CameraLocations,
   cameras: Cameras,
   collisions: Collisions,
@@ -133,8 +136,8 @@ const PAGES = {
   alerts: Alerts,
   analytics: Analytics,
 }
-const CAPTAIN_PAGES = ['dashboard', 'cameraLocations', 'cameras', 'collisions', 'users', 'alerts', 'analytics']
-const RESPONDER_PAGES = ['dashboard', 'cameraLocations', 'collisions', 'alerts', 'analytics']
+const CAPTAIN_PAGES = ['dashboard', 'cameraDashboard', 'cameraLocations', 'cameras', 'collisions', 'users', 'alerts', 'analytics']
+const RESPONDER_PAGES = ['dashboard', 'cameraDashboard', 'cameraLocations', 'collisions', 'alerts', 'analytics']
 
 function Shell({ user, onLogout }) {
   const [page, setPage] = useState('dashboard')

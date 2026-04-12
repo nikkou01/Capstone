@@ -12,3 +12,7 @@ frontend/release/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local model and CCTV test artifacts
+backend/models/*.pt
+tools/CCTV/myvenv/

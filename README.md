@@ -20,7 +20,7 @@ Use this checklist after cloning the repo on a different PC.
 
 5. Open:
 - Frontend (dev server): http://localhost:5173
-- API Docs: http://localhost:8000/docs
+- API Docs (desktop mode): http://localhost:8001/docs
 
 ## Important Notes
 
@@ -29,6 +29,8 @@ Use this checklist after cloning the repo on a different PC.
 - Default login:
   - Username: `captain`
   - Password: `password`
+- `backend/.env` is local-only (gitignored). On another desktop, copy your own env values if you use custom settings.
+- YOLO model files (`*.pt`) are not tracked. Put your model at `backend/models/best.pt` (or set a custom `DETECTION_MODEL_PATH`).
 
 ## SMS API Integration
 
@@ -95,6 +97,59 @@ API:
 UI:
 - Collision Logs now show clip status.
 - Once ready, `Play 15s Clip` appears in the row and opens an in-app player.
+
+## YOLO best.pt Live Collision Detection
+
+You can run a custom YOLO `.pt` model (for example `best.pt`) directly on live camera frames.
+
+### 1) Put your model file in the project
+
+- Place your model in `backend/models` as `best.pt`
+  - Example path: `safecctv/backend/models/best.pt`
+- Or use a custom path by setting `DETECTION_MODEL_PATH` in `backend/.env`.
+
+### 2) Enable detector settings in `backend/.env`
+
+Use these keys:
+
+- `DETECTION_ENABLED=1`
+- `DETECTION_MODEL_PATH=backend/models/best.pt`
+- `DETECTION_CONFIDENCE_THRESHOLD=0.01`
+- `DETECTION_COOLDOWN_SECONDS=12`
+- `DETECTION_POLL_INTERVAL_SECONDS=0.10`
+- `DETECTION_ALLOWED_CLASS_IDS=` (optional, comma-separated class ids)
+- `DETECTION_ALLOWED_CLASS_NAMES=` (optional, comma-separated class names)
+
+Tip:
+- If your model has exactly one class and it means collision, you can leave both class filters blank.
+
+### 3) Install backend dependencies
+
+The backend now requires `ultralytics`.
+
+- Run setup again (`install.bat`) or install from backend requirements.
+
+### 4) Restart SafeSight
+
+- Restart backend/app so detection service reads the new env values and loads the model.
+
+### 5) Test detection with your live CCTV
+
+- Point CCTV at an accident video feed.
+- Keep camera status as `active` with valid RTSP.
+- The detector automatically creates collision records when a detection passes threshold.
+
+Useful API endpoints:
+
+- `GET /api/detection/status` -> detector health/model status
+- `POST /api/detection/test/{camera_id}?create_event=true` -> run one-shot inference on latest frame (optionally create collision event)
+- `POST /api/detection/enable` and `POST /api/detection/disable` -> runtime toggle
+
+Result flow:
+
+- New detections appear in Collision Logs.
+- SMS alert flow runs as usual.
+- 15-second collision clips are generated as usual.
 
 ## Optional Database Reset (Advanced)
 

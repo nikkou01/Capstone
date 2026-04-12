@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchAlerts, sendTestSmsAlert } from '../api'
+import { formatApiDateTime } from '../utils/datetime'
 
 export default function Alerts({ user, notify }) {
   const [alerts,  setAlerts]  = useState([])
@@ -94,7 +95,7 @@ export default function Alerts({ user, notify }) {
                   <p className="text-xs text-gray-500 mt-1 truncate">{a.message}</p>
                   <p className="text-xs text-gray-400 mt-1">
                     <i className="fas fa-clock mr-1" />
-                    {new Date(a.sent_at).toLocaleString()}
+                    {formatApiDateTime(a.sent_at)}
                   </p>
                 </div>
                 <span className={`flex-shrink-0 px-2 py-1 text-xs rounded-full font-medium

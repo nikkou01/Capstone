@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchCollisions, acknowledgeCollision, fetchCollisionVideoBlob } from '../api'
+import { formatApiDateTime } from '../utils/datetime'
 
 export default function Collisions({ notify }) {
   const [collisions, setCollisions] = useState([])
@@ -148,7 +149,7 @@ export default function Collisions({ notify }) {
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">{c.camera_name}</td>
                   <td className="px-4 py-3 text-sm text-gray-500">{c.camera_location}</td>
                   <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">
-                    {new Date(c.timestamp).toLocaleString()}
+                    {formatApiDateTime(c.timestamp)}
                   </td>
                   <td className="px-4 py-3 text-sm font-semibold text-red-600">
                     {(c.confidence_score * 100).toFixed(1)}%
@@ -239,7 +240,7 @@ export default function Collisions({ notify }) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                 <p className="text-gray-500 text-xs">Collision Time</p>
-                <p className="font-medium text-gray-900">{new Date(viewer.collision.timestamp).toLocaleString()}</p>
+                <p className="font-medium text-gray-900">{formatApiDateTime(viewer.collision.timestamp)}</p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                 <p className="text-gray-500 text-xs">Clip Window</p>

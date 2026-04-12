@@ -2,6 +2,7 @@ export default function Sidebar({ page, setPage, user, onLogout, allowedPages = 
   const logoSrc = `${import.meta.env.BASE_URL}logo.png`
   const nav = [
     { id: 'dashboard',   icon: 'fa-tachometer-alt', label: 'Dashboard'         },
+    { id: 'cameraDashboard', icon: 'fa-th-large', label: 'Camera Dashboard' },
     { id: 'cameraLocations', icon: 'fa-map-marker-alt', label: 'Camera Locations' },
     { id: 'cameras',     icon: 'fa-video',           label: 'Camera Management' },
     { id: 'collisions',  icon: 'fa-exclamation-triangle', label: 'Collision Logs' },

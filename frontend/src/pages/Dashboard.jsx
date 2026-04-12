@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { MapContainer, Marker, Popup, TileLayer, Tooltip } from 'react-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import {
   acknowledgeCollision,
   fetchAlerts,
@@ -11,6 +14,7 @@ import {
 function statusBadgeClass(status) {
   if (status === 'active') return 'bg-green-100 text-green-800'
   if (status === 'maintenance') return 'bg-yellow-100 text-yellow-800'
+  if (status === 'failed') return 'bg-red-100 text-red-800'
   if (status === 'error') return 'bg-red-100 text-red-800'
   return 'bg-gray-100 text-gray-700'
 }
@@ -20,6 +24,26 @@ function alertStatusBadgeClass(status) {
   if (status === 'failed') return 'bg-red-100 text-red-800'
   return 'bg-yellow-100 text-yellow-800'
 }
+
+const DASHBOARD_MAP_DEFAULT_CENTER = [14.5995, 120.9842]
+
+const DASHBOARD_CAMERA_ICON = L.divIcon({
+  className: 'camera-map-pin camera-map-pin--pinned',
+  html: '<span class="camera-map-pin__glyph"><i class="fas fa-video"></i></span>',
+  iconSize: [34, 46],
+  iconAnchor: [17, 44],
+  popupAnchor: [0, -36],
+  tooltipAnchor: [0, -32],
+})
+
+const DASHBOARD_HOTSPOT_ICON = L.divIcon({
+  className: 'camera-map-pin camera-map-pin--draft',
+  html: '<span class="camera-map-pin__glyph"><i class="fas fa-fire"></i></span>',
+  iconSize: [34, 46],
+  iconAnchor: [17, 44],
+  popupAnchor: [0, -36],
+  tooltipAnchor: [0, -32],
+})
 
 function StatCard({ icon, iconBg, iconColor, label, value, sub, subColor }) {
   return (
@@ -82,10 +106,10 @@ export default function Dashboard({ user, notify, onNavigate }) {
   const [alerts, setAlerts] = useState([])
   const [cameras, setCameras] = useState([])
   const [selectedCameraId, setSelectedCameraId] = useState('')
-  const [cameraFrames, setCameraFrames] = useState({})
+  const [featuredFrame, setFeaturedFrame] = useState({ url: '', error: '' })
   const [loading, setLoading] = useState(true)
 
-  const frameUrlRef = useRef(new Map())
+  const featuredFrameUrlRef = useRef('')
   const isCaptain = String(user?.role || '').toLowerCase() === 'captain'
 
   const quickAccessLinks = useMemo(() => {
@@ -95,6 +119,12 @@ export default function Dashboard({ user, notify, onNavigate }) {
         icon: 'fa-map-marker-alt',
         title: 'Camera Locations',
         description: 'Pin and monitor CCTV map coordinates',
+      },
+      {
+        id: 'cameraDashboard',
+        icon: 'fa-th-large',
+        title: 'Camera Dashboard',
+        description: 'Watch all CCTV streams in one page',
       },
       {
         id: 'collisions',
@@ -134,10 +164,11 @@ export default function Dashboard({ user, notify, onNavigate }) {
     () => allCollisions.filter(collision => collision.status === 'pending'),
     [allCollisions],
   )
-  const mappedCameras = useMemo(
-    () => cameras.filter(cam => Number.isFinite(cam.map_latitude) && Number.isFinite(cam.map_longitude)).length,
+  const mappedCameraPins = useMemo(
+    () => cameras.filter(cam => Number.isFinite(cam.map_latitude) && Number.isFinite(cam.map_longitude)),
     [cameras],
   )
+  const mappedCameras = mappedCameraPins.length
   const streamableCameras = useMemo(
     () => cameras.filter(cam => cam.status === 'active' && cam.rtsp_url),
     [cameras],
@@ -158,6 +189,70 @@ export default function Dashboard({ user, notify, onNavigate }) {
     const [name, count] = Object.entries(counter).sort((a, b) => b[1] - a[1])[0]
     return { name, count }
   }, [allCollisions])
+
+  const monthlyAnalytics = useMemo(() => {
+    const now = new Date()
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const elapsedDays = Math.max(now.getDate(), 1)
+
+    const monthlyCollisions = allCollisions.filter(collision => {
+      const stamp = new Date(collision.timestamp)
+      if (Number.isNaN(stamp.getTime())) return false
+      return stamp >= monthStart && stamp <= now
+    })
+
+    const severityCounts = { high: 0, medium: 0, low: 0 }
+    const statusCounts = { pending: 0, acknowledged: 0, responded: 0, resolved: 0 }
+    const cameraIndex = new Map(cameras.map(cam => [cam.id, cam]))
+    const hotspots = new Map()
+
+    for (const collision of monthlyCollisions) {
+      const severityKey = String(collision.severity || 'medium').toLowerCase()
+      if (severityKey in severityCounts) severityCounts[severityKey] += 1
+      else severityCounts.medium += 1
+
+      const statusKey = String(collision.status || 'pending').toLowerCase()
+      if (statusKey in statusCounts) statusCounts[statusKey] += 1
+
+      const cameraId = collision.camera_id || `name:${collision.camera_name || 'Unknown camera'}`
+      if (!hotspots.has(cameraId)) {
+        hotspots.set(cameraId, {
+          cameraId: collision.camera_id || null,
+          name: cameraIndex.get(collision.camera_id || '')?.name || collision.camera_name || 'Unknown camera',
+          count: 0,
+        })
+      }
+      hotspots.get(cameraId).count += 1
+    }
+
+    const topHotspots = Array.from(hotspots.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 3)
+
+    return {
+      monthLabel: now.toLocaleString('en-US', { month: 'long', year: 'numeric' }),
+      totalThisMonth: monthlyCollisions.length,
+      dailyAverage: (monthlyCollisions.length / elapsedDays).toFixed(2),
+      highSeverity: severityCounts.high,
+      statusCounts,
+      topHotspots,
+      topHotspotCameraId: topHotspots[0]?.cameraId || null,
+    }
+  }, [allCollisions, cameras])
+
+  const locationMapCenter = useMemo(() => {
+    if (!mappedCameraPins.length) return DASHBOARD_MAP_DEFAULT_CENTER
+
+    const sums = mappedCameraPins.reduce(
+      (acc, cam) => ({
+        lat: acc.lat + cam.map_latitude,
+        lng: acc.lng + cam.map_longitude,
+      }),
+      { lat: 0, lng: 0 },
+    )
+
+    return [sums.lat / mappedCameraPins.length, sums.lng / mappedCameraPins.length]
+  }, [mappedCameraPins])
 
   async function load() {
     try {
@@ -198,93 +293,60 @@ export default function Dashboard({ user, notify, onNavigate }) {
 
   useEffect(() => {
     let cancelled = false
-    let inFlight = false
 
-    if (!streamableCameras.length) {
-      setCameraFrames(prev => {
-        const next = { ...prev }
-        for (const id of Object.keys(next)) {
-          const oldUrl = frameUrlRef.current.get(id)
-          if (oldUrl) URL.revokeObjectURL(oldUrl)
-          frameUrlRef.current.delete(id)
-          delete next[id]
-        }
-        return next
-      })
+    const resetFeaturedFrame = (error = '') => {
+      if (featuredFrameUrlRef.current) {
+        URL.revokeObjectURL(featuredFrameUrlRef.current)
+        featuredFrameUrlRef.current = ''
+      }
+      setFeaturedFrame({ url: '', error })
+    }
+
+    if (!selectedCamera) {
+      resetFeaturedFrame('')
       return
     }
 
-    const refreshSnapshots = async () => {
-      if (inFlight) return
-      inFlight = true
+    const canLoadSnapshot = selectedCamera.status === 'active' && !!selectedCamera.rtsp_url
+    if (!canLoadSnapshot) {
+      resetFeaturedFrame('Camera is offline, inactive, or has no stream URL.')
+      return
+    }
 
+    const refreshSnapshot = async () => {
       try {
-        const results = await Promise.all(
-          streamableCameras.map(async cam => {
-            try {
-              const blob = await fetchCameraSnapshotBlob(cam.id)
-              return { id: cam.id, blob }
-            } catch (err) {
-              const error = await parseErrorDetail(err, 'Unable to fetch live frame.')
-              return { id: cam.id, error }
-            }
-          }),
-        )
-
+        const blob = await fetchCameraSnapshotBlob(selectedCamera.id)
         if (cancelled) return
 
-        setCameraFrames(prev => {
-          const next = { ...prev }
-          const streamableIds = new Set(streamableCameras.map(cam => cam.id))
+        const nextUrl = URL.createObjectURL(blob)
+        if (featuredFrameUrlRef.current) {
+          URL.revokeObjectURL(featuredFrameUrlRef.current)
+        }
 
-          for (const id of Object.keys(next)) {
-            if (!streamableIds.has(id)) {
-              const oldUrl = frameUrlRef.current.get(id)
-              if (oldUrl) URL.revokeObjectURL(oldUrl)
-              frameUrlRef.current.delete(id)
-              delete next[id]
-            }
-          }
-
-          for (const result of results) {
-            if (result.blob) {
-              const nextUrl = URL.createObjectURL(result.blob)
-              const oldUrl = frameUrlRef.current.get(result.id)
-              if (oldUrl) URL.revokeObjectURL(oldUrl)
-
-              frameUrlRef.current.set(result.id, nextUrl)
-              next[result.id] = { url: nextUrl, error: '', updatedAt: Date.now() }
-            } else {
-              next[result.id] = {
-                url: frameUrlRef.current.get(result.id) || '',
-                error: result.error,
-                updatedAt: Date.now(),
-              }
-            }
-          }
-
-          return next
-        })
-      } finally {
-        inFlight = false
+        featuredFrameUrlRef.current = nextUrl
+        setFeaturedFrame({ url: nextUrl, error: '' })
+      } catch (err) {
+        const error = await parseErrorDetail(err, 'Unable to fetch featured camera snapshot.')
+        if (!cancelled) {
+          setFeaturedFrame(prev => ({ ...prev, error }))
+        }
       }
     }
 
-    refreshSnapshots()
-    const timer = setInterval(refreshSnapshots, 3000)
+    refreshSnapshot()
+    const timer = setInterval(refreshSnapshot, 3000)
 
     return () => {
       cancelled = true
       clearInterval(timer)
     }
-  }, [streamableCameras])
+  }, [selectedCamera])
 
   useEffect(() => {
     return () => {
-      for (const url of frameUrlRef.current.values()) {
-        URL.revokeObjectURL(url)
+      if (featuredFrameUrlRef.current) {
+        URL.revokeObjectURL(featuredFrameUrlRef.current)
       }
-      frameUrlRef.current.clear()
     }
   }, [])
 
@@ -370,7 +432,7 @@ export default function Dashboard({ user, notify, onNavigate }) {
           <i className="fas fa-compass text-emerald-500" />
           <h3 className="text-lg font-medium text-gray-900">Quick Access</h3>
         </div>
-        <div className="p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <div className="p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
           {quickAccessLinks.map(link => (
             <QuickAccessCard
               key={link.id}
@@ -380,6 +442,151 @@ export default function Dashboard({ user, notify, onNavigate }) {
               onClick={() => onNavigate?.(link.id)}
             />
           ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+        <div className="xl:col-span-2 bg-white rounded-lg shadow-sm border border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2">
+              <i className="fas fa-chart-pie text-indigo-500" />
+              <h3 className="text-lg font-medium text-gray-900">Analytics Snapshot</h3>
+            </div>
+            <button
+              onClick={() => onNavigate?.('analytics')}
+              className="text-xs font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              Open Analytics
+            </button>
+          </div>
+
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">This Month</p>
+                <p className="text-xl font-bold text-gray-900">{monthlyAnalytics.totalThisMonth}</p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">Daily Avg</p>
+                <p className="text-xl font-bold text-gray-900">{monthlyAnalytics.dailyAverage}</p>
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="text-[11px] uppercase tracking-wide text-gray-500">High Sev</p>
+                <p className="text-xl font-bold text-red-600">{monthlyAnalytics.highSeverity}</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-2">{monthlyAnalytics.monthLabel} status mix</p>
+              <div className="space-y-2">
+                {[
+                  { key: 'pending', label: 'Pending', color: 'bg-orange-500' },
+                  { key: 'acknowledged', label: 'Acknowledged', color: 'bg-blue-500' },
+                  { key: 'responded', label: 'Responded', color: 'bg-violet-500' },
+                  { key: 'resolved', label: 'Resolved', color: 'bg-emerald-500' },
+                ].map(item => {
+                  const value = monthlyAnalytics.statusCounts[item.key]
+                  const total = Math.max(monthlyAnalytics.totalThisMonth, 1)
+                  const pct = Math.round((value / total) * 100)
+
+                  return (
+                    <div key={item.key}>
+                      <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                        <span>{item.label}</span>
+                        <span>{value}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <div className={`${item.color} h-2 rounded-full`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium text-gray-500 mb-2">Top camera hotspots (monthly)</p>
+              {monthlyAnalytics.topHotspots.length === 0 ? (
+                <p className="text-sm text-gray-500">No monthly incident data yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {monthlyAnalytics.topHotspots.map((item, idx) => (
+                    <div key={`${item.name}-${idx}`} className="flex items-center justify-between text-sm">
+                      <span className="text-gray-700">{item.name}</span>
+                      <span className="font-semibold text-gray-900">{item.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="xl:col-span-3 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2">
+              <i className="fas fa-map-marked-alt text-emerald-600" />
+              <h3 className="text-lg font-medium text-gray-900">Camera Location Map Snapshot</h3>
+            </div>
+            <button
+              onClick={() => onNavigate?.('cameraLocations')}
+              className="text-xs font-medium text-emerald-700 hover:text-emerald-800"
+            >
+              Open Full Map
+            </button>
+          </div>
+
+          <div className="p-6">
+            {mappedCameraPins.length === 0 ? (
+              <div className="h-[320px] rounded-lg border border-dashed border-gray-300 bg-gray-50 flex flex-col items-center justify-center text-center px-6">
+                <i className="fas fa-map-pin text-2xl text-gray-400 mb-2" />
+                <p className="text-sm font-medium text-gray-700">No mapped camera locations yet.</p>
+                <p className="text-xs text-gray-500 mt-1">Assign pinpoints in Camera Locations to populate this map.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="relative z-0 h-[320px] rounded-lg overflow-hidden border border-gray-200">
+                  <MapContainer
+                    center={locationMapCenter}
+                    zoom={13}
+                    scrollWheelZoom={false}
+                    zoomControl={false}
+                    className="h-full w-full z-0"
+                  >
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+
+                    {mappedCameraPins.map(camera => {
+                      const isTopHotspot = monthlyAnalytics.topHotspotCameraId && camera.id === monthlyAnalytics.topHotspotCameraId
+                      return (
+                        <Marker
+                          key={camera.id}
+                          position={[camera.map_latitude, camera.map_longitude]}
+                          icon={isTopHotspot ? DASHBOARD_HOTSPOT_ICON : DASHBOARD_CAMERA_ICON}
+                        >
+                          <Tooltip direction="top" offset={[0, -10]}>{camera.name}</Tooltip>
+                          <Popup>
+                            <div className="text-sm">
+                              <p className="font-semibold text-gray-900">{camera.name}</p>
+                              <p className="text-gray-600">{camera.location}</p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {camera.map_latitude.toFixed(6)}, {camera.map_longitude.toFixed(6)}
+                              </p>
+                            </div>
+                          </Popup>
+                        </Marker>
+                      )
+                    })}
+                  </MapContainer>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Showing {mappedCameraPins.length} mapped camera(s). Fire icon marks this month’s top hotspot camera.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -422,9 +629,9 @@ export default function Dashboard({ user, notify, onNavigate }) {
                 </div>
 
                 <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden border border-gray-800 relative">
-                  {selectedCamera.status === 'active' && selectedCamera.rtsp_url && cameraFrames[selectedCamera.id]?.url ? (
+                  {selectedCamera.status === 'active' && selectedCamera.rtsp_url && featuredFrame.url ? (
                     <img
-                      src={cameraFrames[selectedCamera.id].url}
+                      src={featuredFrame.url}
                       alt={`${selectedCamera.name} live feed`}
                       className="w-full h-full object-cover"
                     />
@@ -433,7 +640,7 @@ export default function Dashboard({ user, notify, onNavigate }) {
                       <i className="fas fa-video-slash text-3xl mb-3" />
                       <p className="font-medium">Live feed unavailable</p>
                       <p className="text-xs text-gray-400 mt-1">
-                        {cameraFrames[selectedCamera.id]?.error || 'Camera is offline, inactive, or has no stream URL.'}
+                        {featuredFrame.error || 'Camera is offline, inactive, or has no stream URL.'}
                       </p>
                     </div>
                   )}
@@ -507,62 +714,6 @@ export default function Dashboard({ user, notify, onNavigate }) {
                   {pendingCollisions.length} unacknowledged collision event(s) require attention.
                 </p>
               </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-3">
-          <div className="flex items-center space-x-2">
-            <i className="fas fa-th-large text-blue-500" />
-            <h3 className="text-lg font-medium text-gray-900">Camera Dashboard - All CCTV Live Output</h3>
-          </div>
-          <span className="text-xs text-gray-500">
-            {streamableCameras.length} live / {cameras.length} total cameras
-          </span>
-        </div>
-        <div className="p-6">
-          {cameras.length === 0 ? (
-            <div className="text-center py-10 text-gray-500">
-              <i className="fas fa-video text-3xl mb-2 block text-gray-300" />
-              No cameras configured yet.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {cameras.map(camera => {
-                const frame = cameraFrames[camera.id]
-                const canStream = camera.status === 'active' && camera.rtsp_url
-
-                return (
-                  <div key={camera.id} className="rounded-lg border border-gray-200 overflow-hidden bg-white">
-                    <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-gray-900 text-sm">{camera.name}</p>
-                        <p className="text-xs text-gray-500">{camera.location}</p>
-                      </div>
-                      <span className={`px-2 py-1 text-xs rounded-full font-medium ${statusBadgeClass(camera.status)}`}>
-                        {camera.status}
-                      </span>
-                    </div>
-
-                    <div className="aspect-video bg-gray-900">
-                      {canStream && frame?.url ? (
-                        <img src={frame.url} alt={`${camera.name} live`} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-gray-300 text-sm px-4 text-center">
-                          {frame?.error || (canStream ? 'Loading live frame...' : 'Live output unavailable for this camera.')}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="px-4 py-3 text-xs text-gray-500 space-y-1">
-                      <p>IP: {camera.ip_address}:{camera.port}</p>
-                      <p>{camera.description || 'No description provided.'}</p>
-                    </div>
-                  </div>
-                )
-              })}
             </div>
           )}
         </div>

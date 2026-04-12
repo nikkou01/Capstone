@@ -8,7 +8,9 @@ const APP_NAME = 'SafeSight';
 const APP_ID = 'com.safesight.desktop';
 const FRONTEND_URL = 'http://127.0.0.1:5173';
 const FRONTEND_READY_RESOURCE = 'http-get://127.0.0.1:5173';
-const BACKEND_READY_RESOURCE = 'http-get://127.0.0.1:8000/docs';
+const BACKEND_HOST = '127.0.0.1';
+const BACKEND_PORT = 8001;
+const BACKEND_READY_RESOURCE = `http-get://${BACKEND_HOST}:${BACKEND_PORT}/docs`;
 const STARTUP_TIMEOUT_MS = 60000;
 
 let backendProcess = null;
@@ -92,9 +94,9 @@ function startBackend() {
     'uvicorn',
     'main:app',
     '--host',
-    '127.0.0.1',
+    BACKEND_HOST,
     '--port',
-    '8000',
+    String(BACKEND_PORT),
   ];
 
   backendProcess = spawn(pythonExe, backendArgs, {

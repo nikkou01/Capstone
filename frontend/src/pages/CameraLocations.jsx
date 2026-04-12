@@ -2,22 +2,27 @@ import { useEffect, useMemo, useState } from 'react'
 import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import icon2x from 'leaflet/dist/images/marker-icon-2x.png'
-import icon from 'leaflet/dist/images/marker-icon.png'
-import shadow from 'leaflet/dist/images/marker-shadow.png'
 import { createCamera, fetchCameras, updateCamera } from '../api'
 
 const DEFAULT_CENTER = [14.5995, 120.9842]
 
-let iconConfigured = false
-if (!iconConfigured) {
-  L.Icon.Default.mergeOptions({
-    iconRetinaUrl: icon2x,
-    iconUrl: icon,
-    shadowUrl: shadow,
-  })
-  iconConfigured = true
-}
+const PINNED_CAMERA_ICON = L.divIcon({
+  className: 'camera-map-pin camera-map-pin--pinned',
+  html: '<span class="camera-map-pin__glyph"><i class="fas fa-video"></i></span>',
+  iconSize: [34, 46],
+  iconAnchor: [17, 44],
+  popupAnchor: [0, -36],
+  tooltipAnchor: [0, -32],
+})
+
+const DRAFT_CAMERA_ICON = L.divIcon({
+  className: 'camera-map-pin camera-map-pin--draft',
+  html: '<span class="camera-map-pin__glyph"><i class="fas fa-map-marker-alt"></i></span>',
+  iconSize: [34, 46],
+  iconAnchor: [17, 44],
+  popupAnchor: [0, -36],
+  tooltipAnchor: [0, -32],
+})
 
 function MapClickSelector({ enabled, onSelect }) {
   useMapEvents({
@@ -120,8 +125,6 @@ export default function CameraLocations({ user, notify }) {
         name: `Test Camera ${suffix}`,
         location: 'Test Zone',
         rtsp_url: `rtsp://127.0.0.1:8554/test-${suffix}`,
-        ip_address: '127.0.0.1',
-        port: 554,
         description: 'Seeded test camera for map pinpoint assignment',
       })
 
@@ -279,7 +282,7 @@ export default function CameraLocations({ user, notify }) {
                 />
 
                 {pinnedCameras.map(cam => (
-                  <Marker key={cam.id} position={[cam.map_latitude, cam.map_longitude]}>
+                  <Marker key={cam.id} position={[cam.map_latitude, cam.map_longitude]} icon={PINNED_CAMERA_ICON}>
                     <Tooltip permanent direction="top" offset={[0, -10]}>{cam.name}</Tooltip>
                     <Popup>
                       <div className="text-sm">
@@ -294,7 +297,7 @@ export default function CameraLocations({ user, notify }) {
                 ))}
 
                 {draftPoint && selectedCamera && (
-                  <Marker position={[draftPoint.lat, draftPoint.lng]} opacity={0.85}>
+                  <Marker position={[draftPoint.lat, draftPoint.lng]} opacity={0.9} icon={DRAFT_CAMERA_ICON}>
                     <Tooltip permanent direction="top" offset={[0, -10]}>
                       {selectedCamera.name} (draft)
                     </Tooltip>
@@ -325,7 +328,7 @@ export default function CameraLocations({ user, notify }) {
               />
 
               {pinnedCameras.map(cam => (
-                <Marker key={cam.id} position={[cam.map_latitude, cam.map_longitude]}>
+                <Marker key={cam.id} position={[cam.map_latitude, cam.map_longitude]} icon={PINNED_CAMERA_ICON}>
                   <Tooltip permanent direction="top" offset={[0, -10]}>{cam.name}</Tooltip>
                   <Popup>
                     <div className="text-sm">

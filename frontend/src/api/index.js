@@ -1,7 +1,13 @@
 import axios from 'axios'
 
 const isDesktopFileMode = typeof window !== 'undefined' && window.location.protocol === 'file:'
-const apiBaseURL = isDesktopFileMode ? 'http://127.0.0.1:8000/api' : '/api'
+const isElectronRuntime =
+  typeof navigator !== 'undefined' &&
+  typeof navigator.userAgent === 'string' &&
+  navigator.userAgent.toLowerCase().includes('electron')
+const isDesktopRuntime = isDesktopFileMode || isElectronRuntime
+const apiBaseURL = isDesktopRuntime ? 'http://127.0.0.1:8001/api' : '/api'
+export const API_BASE_URL = apiBaseURL
 
 const api = axios.create({ baseURL: apiBaseURL })
 
@@ -43,8 +49,15 @@ export async function fetchStats() {
 export async function fetchCameras()          { const { data } = await api.get('/cameras/');              return data }
 export async function createCamera(body)      { const { data } = await api.post('/cameras/', body);       return data }
 export async function updateCamera(id, body)  { const { data } = await api.put(`/cameras/${id}`, body);   return data }
+export async function reconnectCamera(id)     { const { data } = await api.post(`/cameras/${id}/reconnect`); return data }
 export async function deleteCamera(id)        { const { data } = await api.delete(`/cameras/${id}`);      return data }
 export async function fetchCameraSnapshotBlob(id) { const { data } = await api.get(`/cameras/${id}/snapshot`, { responseType: 'blob' }); return data }
+export function buildCameraStreamUrl(id, token = '') {
+  const encodedId = encodeURIComponent(id)
+  const base = `${API_BASE_URL}/cameras/${encodedId}/stream`
+  if (!token) return base
+  return `${base}?token=${encodeURIComponent(token)}`
+}
 export async function mockCollision(cameraId) { const { data } = await api.post(`/collisions/mock-detection?camera_id=${cameraId}`); return data }
 
 // ── Collisions ────────────────────────────────────────────────────────────────

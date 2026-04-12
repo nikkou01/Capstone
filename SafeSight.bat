@@ -4,8 +4,9 @@ setlocal
 set "ROOT=%~dp0"
 set "BACKEND_DIR=%ROOT%backend"
 set "FRONTEND_DIR=%ROOT%frontend"
+set "BACKEND_PYTHON=%BACKEND_DIR%\.venv\Scripts\python.exe"
 
-if not exist "%BACKEND_DIR%\.venv\Scripts\python.exe" (
+if not exist "%BACKEND_PYTHON%" (
     echo ERROR: Backend virtual environment is missing.
     echo Run install.bat first, then try again.
     pause
@@ -42,6 +43,23 @@ if errorlevel 1 (
         )
     ) else (
         echo MongoDB service is already running.
+    )
+)
+
+echo Checking for stale frontend/backend process on ports 5173, 8000, and 8001...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$pids = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 5173,8000,8001 } | Select-Object -ExpandProperty OwningProcess -Unique); foreach ($procId in $pids) { if ($procId -gt 0) { try { Stop-Process -Id $procId -Force -ErrorAction Stop; Write-Host ('Stopped listener PID ' + $procId); continue } catch {} ; try { Start-Process -FilePath 'taskkill' -ArgumentList '/PID', $procId, '/T', '/F' -NoNewWindow -Wait | Out-Null; Write-Host ('Taskkill attempted for PID ' + $procId) } catch {} } }" >nul 2>nul
+
+echo Verifying backend AI dependencies (ultralytics/torch)...
+"%BACKEND_PYTHON%" -c "import ultralytics, torch, cv2, imageio_ffmpeg" >nul 2>nul
+if errorlevel 1 (
+    echo Installing missing backend dependencies. This may take a few minutes...
+    "%BACKEND_PYTHON%" -m pip install --disable-pip-version-check -r "%BACKEND_DIR%\requirements.txt"
+    if errorlevel 1 (
+        echo.
+        echo ERROR: Failed to install backend dependencies.
+        echo Close any running backend Python processes and try again.
+        pause
+        exit /b 1
     )
 )
 
