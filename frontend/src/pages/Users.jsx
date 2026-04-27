@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { fetchUsers, createUser, updateUser, deleteUser } from '../api'
+import useAutoRefresh from '../utils/useAutoRefresh'
 
 const EMPTY = { username: '', email: '', full_name: '', role: 'responder', phone_number: '', password: '' }
 
@@ -11,17 +12,18 @@ export default function Users({ user: currentUser, notify }) {
   const [editId,  setEditId]  = useState(null)
   const [saving,  setSaving]  = useState(false)
 
-  async function load() {
+  async function load(options = {}) {
+    const background = !!options.background
     try {
       setUsers(await fetchUsers())
     } catch {
-      notify('Failed to load users.', 'error')
+      if (!background) notify('Failed to load users.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useAutoRefresh(load, { intervalMs: 6000 })
 
   function openAdd()     { setForm(EMPTY); setEditId(null); setModal('add') }
   function openEdit(u)   { setForm({ username: u.username, email: u.email, full_name: u.full_name,

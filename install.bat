@@ -4,6 +4,7 @@ setlocal
 set "ROOT=%~dp0"
 set "BACKEND_DIR=%ROOT%backend"
 set "FRONTEND_DIR=%ROOT%frontend"
+set "MOBILE_DIR=%ROOT%mobile-responder"
 set "BACKEND_VENV=%BACKEND_DIR%\.venv"
 set "BACKEND_PYTHON=%BACKEND_VENV%\Scripts\python.exe"
 set "BACKEND_ENV_FILE=%BACKEND_DIR%\.env"
@@ -28,7 +29,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [1/5] Creating Python virtual environment...
+echo [1/6] Creating Python virtual environment...
 if not exist "%BACKEND_PYTHON%" (
     python -m venv "%BACKEND_VENV%"
     if errorlevel 1 (
@@ -40,7 +41,7 @@ if not exist "%BACKEND_PYTHON%" (
 )
 
 echo.
-echo [2/5] Installing backend dependencies...
+echo [2/6] Installing backend dependencies...
 "%BACKEND_PYTHON%" -m pip install --disable-pip-version-check -r "%BACKEND_DIR%\requirements.txt"
 if errorlevel 1 (
     echo ERROR: Failed to install backend dependencies.
@@ -48,7 +49,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/5] Preparing backend configuration...
+echo [3/6] Preparing backend configuration...
 if not exist "%BACKEND_ENV_FILE%" (
     if exist "%BACKEND_ENV_TEMPLATE%" (
         copy /Y "%BACKEND_ENV_TEMPLATE%" "%BACKEND_ENV_FILE%" >nul
@@ -74,7 +75,7 @@ if not exist "%BACKEND_DIR%\models\best.pt" (
 )
 
 echo.
-echo [4/5] Installing frontend dependencies...
+echo [4/6] Installing frontend dependencies...
 cd /d "%FRONTEND_DIR%"
 call npm install
 if errorlevel 1 (
@@ -83,7 +84,20 @@ if errorlevel 1 (
 )
 
 echo.
-echo [5/5] Checking MongoDB service...
+echo [5/6] Installing mobile responder dependencies...
+if exist "%MOBILE_DIR%\package.json" (
+    cd /d "%MOBILE_DIR%"
+    call npm install
+    if errorlevel 1 (
+        echo ERROR: Failed to install mobile-responder dependencies.
+        pause & exit /b 1
+    )
+) else (
+    echo mobile-responder folder not found. Skipping mobile dependency install.
+)
+
+echo.
+echo [6/6] Checking MongoDB service...
 sc query MongoDB >nul 2>nul
 if errorlevel 1 (
     echo WARNING: MongoDB service 'MongoDB' was not found.
@@ -108,9 +122,10 @@ echo.
 echo =========================================
 echo   Setup complete!
 echo   Run SafeSight.bat to launch the app.
+echo   For mobile app run: cd mobile-responder ^&^& npm run start
 echo   Database is created automatically on first run.
 echo   Default login is auto-created: captain / password
-echo   See README.md for the another-device setup checklist.
+echo   See NEW_DESKTOP_SETUP.md for full step-by-step setup.
 echo =========================================
 endlocal
 pause

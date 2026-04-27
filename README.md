@@ -4,6 +4,8 @@
 
 Use this checklist after cloning the repo on a different PC.
 
+Detailed guide: see `NEW_DESKTOP_SETUP.md`.
+
 1. Install prerequisites:
 - Python 3.10+
 - Node.js (with npm)
@@ -11,16 +13,24 @@ Use this checklist after cloning the repo on a different PC.
 
 2. Clone the repository and open the project folder.
 
+Path note:
+- The project can live in any folder/drive. Startup scripts use script-relative paths.
+
+2.5. Run machine preflight check (recommended):
+- Double-click `preflight.bat`
+- or run `./preflight.bat` in terminal
+
 3. Run first-time setup:
 - Double-click `install.bat`
 
 4. Start the app:
 - Double-click `SafeSight.bat`
-- This opens SafeSight as a native desktop window and auto-starts backend/frontend services.
+- This opens SafeSight as a native desktop window, auto-starts backend/frontend services, and auto-launches the mobile responder Expo app in a separate terminal.
+- Mobile API URL is auto-set to `http://<detected-lan-ip>:8000/api` by the launcher.
 
 5. Open:
 - Frontend (dev server): http://localhost:5173
-- API Docs (desktop mode): http://localhost:8001/docs
+- API Docs (desktop mode): http://localhost:8000/docs
 
 ## Important Notes
 
@@ -28,6 +38,9 @@ Use this checklist after cloning the repo on a different PC.
 - Backend startup auto-creates the default captain account if none exists.
 - Default login:
   - Username: `captain`
+  - Password: `password`
+- Default responder login for the mobile app:
+  - Username: `responder`
   - Password: `password`
 - `backend/.env` is local-only (gitignored), but setup now auto-creates it from `backend/.env.example` if missing.
 - Default detection model `backend/models/best.pt` is included in the repository.
@@ -49,6 +62,7 @@ Configure these in `backend/.env`:
 - `SMS_API_FROM_FIELD`: sender field name in payload (default `from`)
 - `SMS_API_EXTRA_JSON`: extra JSON object merged into payload (optional)
 - `SMS_API_TIMEOUT_SECONDS`: request timeout in seconds
+- `PUBLIC_BASE_URL`: public base URL used in SMS clip links (example: `https://your-domain.com`)
 
 ### UniSMS Quick Configuration
 
@@ -68,7 +82,7 @@ Example request payload sent by backend:
 ```json
 {
   "to": "+639xxxxxxxxx",
-  "message": "COLLISION ALERT: HIGH severity at Camera 1 (Main Road) on 2026-04-09 14:35. Confidence: 92%",
+  "message": "COLLISION ALERT: HIGH severity at Camera 1 (Main Road) on 2026-04-09 14:35. Confidence: 92%. Clip (10s before + 5s after): https://your-domain.com/api/public/collisions/<collision_id>/video?token=<token>",
   "from": "SafeSight"
 }
 ```
@@ -89,15 +103,35 @@ What gets stored:
 
 Defaults in `backend/.env`:
 - `COLLISION_CLIP_SECONDS=15`
-- `COLLISION_PRE_EVENT_SECONDS=5`
+- `COLLISION_PRE_EVENT_SECONDS=10`
 - `COLLISION_CLIP_FPS=10`
 
 API:
 - `GET /api/collisions/{collision_id}/video` returns the stored MP4 clip.
+- `GET /api/public/collisions/{collision_id}/video?token=...` returns the same clip without login, for SMS recipients.
 
 UI:
 - Collision Logs now show clip status.
 - Once ready, `Play 15s Clip` appears in the row and opens an in-app player.
+
+## Collision Simulation Upload
+
+You can upload a local video file and test it against the currently loaded YOLO model.
+
+API:
+- `POST /api/collisions/simulate` (multipart field name: `video_file`)
+
+Response highlights:
+- `detected`: whether the model/heuristic detected a collision candidate
+- `confidence`, `class_name`, `detected_at_second`
+- analyzed frame statistics (`analyzed_frames`, `sampled_every_n_frames`)
+
+Tuning keys in `backend/.env`:
+- `SIMULATION_ANALYSIS_FPS=6`
+- `SIMULATION_MAX_ANALYZED_FRAMES=900`
+
+UI:
+- Collision Logs now includes a `Collision Simulation` button where you can pick a video and run detection.
 
 ## YOLO best.pt Live Collision Detection
 
@@ -170,3 +204,27 @@ backend\.venv\Scripts\python.exe backend\reset_db.py --yes
 Notes:
 - Build packaging includes the `backend` folder from the project root.
 - Make sure `install.bat` has been run before packaging so `backend/.venv` exists.
+
+## Android Responder Mobile App
+
+A dedicated responder-only Android app is now available in `mobile-responder`.
+
+What it includes:
+- Responder-only login (non-responder roles are blocked in the app)
+- Live auto-refresh dashboards for collisions, alerts, camera health, and summary stats
+- Collision status actions (acknowledge/responded/resolved flow)
+- Same backend/database integration through existing `/api` endpoints
+- SMS alerts remain active as backup alerts (double alerting)
+
+Quick start:
+
+1. Open a terminal in `mobile-responder`
+2. Install dependencies:
+  - `npm install`
+3. Set API URL to your backend LAN host (important for phone testing):
+  - PowerShell: `$env:EXPO_PUBLIC_API_BASE_URL="http://<YOUR-PC-LAN-IP>:8000/api"`
+4. Start Expo:
+  - `npm run start`
+5. Run on Android emulator or Expo Go on a phone (same Wi-Fi)
+
+See full instructions in `mobile-responder/README.md`.

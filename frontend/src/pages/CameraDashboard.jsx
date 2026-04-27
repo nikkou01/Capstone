@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { buildCameraStreamUrl, fetchCameras, fetchCollisions } from '../api'
+import useAutoRefresh from '../utils/useAutoRefresh'
 
 function statusBadgeClass(status) {
   if (status === 'active') return 'bg-green-100 text-green-800'
@@ -26,7 +27,7 @@ function StatTile({ icon, label, value, hint, tone = 'text-gray-900', iconBg = '
   )
 }
 
-export default function CameraDashboard({ user, notify, onNavigate }) {
+export default function CameraDashboard({ user, notify, onNavigate, navigationState }) {
   const [cameras, setCameras] = useState([])
   const [collisions, setCollisions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -35,6 +36,8 @@ export default function CameraDashboard({ user, notify, onNavigate }) {
   const [streamEverConnected, setStreamEverConnected] = useState({})
   const [fullscreenCameraId, setFullscreenCameraId] = useState(null)
   const [isWallFullscreen, setIsWallFullscreen] = useState(false)
+
+  const requestedCameraId = navigationState?.cameraId ? String(navigationState.cameraId) : ''
 
   const streamToken = useMemo(() => localStorage.getItem('token') || '', [])
   const isCaptain = String(user?.role || '').toLowerCase() === 'captain'
@@ -84,21 +87,20 @@ export default function CameraDashboard({ user, notify, onNavigate }) {
     return 4
   }, [cameras.length])
 
-  async function load() {
+  async function load(options = {}) {
+    const background = !!options.background
     try {
       const [cameraDocs, collisionDocs] = await Promise.all([fetchCameras(), fetchCollisions()])
       setCameras(cameraDocs)
       setCollisions(collisionDocs)
     } catch {
-      notify('Failed to load camera dashboard data.', 'error')
+      if (!background) notify('Failed to load camera dashboard data.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => {
-    load()
-  }, [])
+  useAutoRefresh(load, { intervalMs: 4000 })
 
   useEffect(() => {
     const streamableIds = new Set(streamableCameras.map(camera => camera.id))
@@ -147,6 +149,16 @@ export default function CameraDashboard({ user, notify, onNavigate }) {
       setFullscreenCameraId(null)
     }
   }, [cameras, fullscreenCameraId])
+
+  useEffect(() => {
+    if (!requestedCameraId) return
+
+    const exists = cameras.some(camera => camera.id === requestedCameraId)
+    if (exists) {
+      setIsWallFullscreen(false)
+      setFullscreenCameraId(requestedCameraId)
+    }
+  }, [requestedCameraId, cameras])
 
   function openCameraFullscreen(cameraId) {
     setIsWallFullscreen(false)

@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "SafeSight Responder",
+    "slug": "safesight-responder",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.safesight.responder"
+    },
+    "extra": {
+      "apiBaseUrl": "http://192.168.1.3:8000/api"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Response, Request, Query
+﻿from fastapi import FastAPI, Depends, HTTPException, status, Response, Request, Query, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -13,7 +13,7 @@ from collections import deque
 from urllib.parse import urlsplit, parse_qsl, urlencode, urlunsplit
 from bson import ObjectId
 from bson.errors import InvalidId
-import os, uuid, jwt, logging, json, base64, asyncio, io, threading, tempfile, time, math
+import os, uuid, jwt, logging, json, base64, asyncio, io, threading, tempfile, time, math, hmac, copy
 import subprocess
 import importlib
 import re
@@ -50,7 +50,7 @@ if "OPENCV_FFMPEG_CAPTURE_OPTIONS" not in os.environ:
         "max_delay;0|reorder_queue_size;0|analyzeduration;0|probesize;32|flush_packets;1"
     )
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Config ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 MONGO_URL   = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME     = os.getenv("DB_NAME", "safesight")
 SECRET_KEY  = os.getenv("SECRET_KEY", "changeme-in-production")
@@ -66,9 +66,18 @@ SMS_API_MESSAGE_FIELD = os.getenv("SMS_API_MESSAGE_FIELD", "message").strip()
 SMS_API_FROM_FIELD = os.getenv("SMS_API_FROM_FIELD", "from").strip()
 SMS_API_EXTRA_JSON = os.getenv("SMS_API_EXTRA_JSON", "").strip()
 SMS_API_TIMEOUT_SECONDS = float(os.getenv("SMS_API_TIMEOUT_SECONDS", "10"))
+SMS_RETRY_WITHOUT_LINKS_ON_BLOCK = os.getenv("SMS_RETRY_WITHOUT_LINKS_ON_BLOCK", "1").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8001").strip().rstrip("/")
+PUBLIC_VIDEO_TOKEN_SECRET = (os.getenv("PUBLIC_VIDEO_TOKEN_SECRET", SECRET_KEY) or SECRET_KEY).strip()
+PUBLIC_VIDEO_TOKEN_TTL_SECONDS = max(int(os.getenv("PUBLIC_VIDEO_TOKEN_TTL_SECONDS", "86400")), 60)
 COLLISION_CLIP_SECONDS = max(int(os.getenv("COLLISION_CLIP_SECONDS", "15")), 5)
-COLLISION_PRE_EVENT_SECONDS = max(int(os.getenv("COLLISION_PRE_EVENT_SECONDS", "5")), 0)
+COLLISION_PRE_EVENT_SECONDS = max(int(os.getenv("COLLISION_PRE_EVENT_SECONDS", "10")), 0)
 COLLISION_CLIP_FPS = max(int(os.getenv("COLLISION_CLIP_FPS", "10")), 1)
+SIMULATION_ANALYSIS_FPS = max(float(os.getenv("SIMULATION_ANALYSIS_FPS", "6")), 1.0)
+SIMULATION_MAX_ANALYZED_FRAMES = max(int(os.getenv("SIMULATION_MAX_ANALYZED_FRAMES", "900")), 1)
+SIMULATION_MAX_UPLOAD_MB = max(float(os.getenv("SIMULATION_MAX_UPLOAD_MB", "250")), 5.0)
 LIVE_STREAM_FPS = max(int(os.getenv("LIVE_STREAM_FPS", "30")), 0)
 LIVE_STREAM_DRAIN_GRABS = max(int(os.getenv("LIVE_STREAM_DRAIN_GRABS", "0")), 0)
 LIVE_STREAM_MAX_CATCHUP_GRABS = max(int(os.getenv("LIVE_STREAM_MAX_CATCHUP_GRABS", "4")), 0)
@@ -76,6 +85,9 @@ LIVE_STREAM_JPEG_QUALITY = max(min(int(os.getenv("LIVE_STREAM_JPEG_QUALITY", "60
 LIVE_STREAM_MAX_WIDTH = max(int(os.getenv("LIVE_STREAM_MAX_WIDTH", "960")), 0)
 LIVE_STREAM_MAX_HEIGHT = max(int(os.getenv("LIVE_STREAM_MAX_HEIGHT", "0")), 0)
 LIVE_STREAM_MAX_READ_FAILURES = max(int(os.getenv("LIVE_STREAM_MAX_READ_FAILURES", "20")), 1)
+LIVE_STREAM_OVERLAY_ENABLED = os.getenv("LIVE_STREAM_OVERLAY_ENABLED", "1").strip().lower() in ("1", "true", "yes", "on")
+LIVE_OVERLAY_INFERENCE_INTERVAL_SECONDS = max(float(os.getenv("LIVE_OVERLAY_INFERENCE_INTERVAL_SECONDS", "0.25")), 0.05)
+LIVE_OVERLAY_MAX_BOXES = max(int(os.getenv("LIVE_OVERLAY_MAX_BOXES", "20")), 1)
 RTSP_VALIDATION_TIMEOUT_SECONDS = max(float(os.getenv("RTSP_VALIDATION_TIMEOUT_SECONDS", "5")), 1.0)
 RTSP_VALIDATION_RETRY_INTERVAL_SECONDS = max(float(os.getenv("RTSP_VALIDATION_RETRY_INTERVAL_SECONDS", "0.05")), 0.01)
 CAMERA_RECONNECT_FAIL_AFTER_SECONDS = max(int(os.getenv("CAMERA_RECONNECT_FAIL_AFTER_SECONDS", "30")), 10)
@@ -226,6 +238,110 @@ def _resize_frame_for_live(frame):
     except Exception:
         return frame
 
+def _draw_detection_overlay(frame, inference: Optional[dict]):
+    if frame is None:
+        return frame
+
+    try:
+        output = frame.copy()
+    except Exception:
+        return frame
+
+    details = inference if isinstance(inference, dict) else {}
+    boxes = details.get("boxes") if isinstance(details.get("boxes"), list) else []
+
+    raw_pair = details.get("pair_id") if isinstance(details.get("pair_id"), (list, tuple)) else []
+    pair_track_ids = set()
+    for item in raw_pair:
+        try:
+            pair_track_ids.add(int(item))
+        except Exception:
+            continue
+
+    for box in boxes[:LIVE_OVERLAY_MAX_BOXES]:
+        if not isinstance(box, dict):
+            continue
+
+        coords = box.get("coords")
+        if not isinstance(coords, (list, tuple)) or len(coords) != 4:
+            continue
+
+        try:
+            x1, y1, x2, y2 = [int(round(float(value))) for value in coords]
+        except Exception:
+            continue
+
+        track_id = box.get("track_id")
+        is_pair_box = False
+        if track_id is not None:
+            try:
+                is_pair_box = int(track_id) in pair_track_ids
+            except Exception:
+                is_pair_box = False
+
+        is_ghost = bool(box.get("is_ghost"))
+        if is_pair_box:
+            color = (0, 0, 255)
+        elif is_ghost:
+            color = (0, 165, 255)
+        else:
+            color = (0, 200, 0)
+
+        try:
+            cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
+        except Exception:
+            continue
+
+        class_name = str(box.get("class_name") or "object")
+        confidence = box.get("confidence")
+        confidence_text = ""
+        if isinstance(confidence, (int, float)):
+            confidence_text = f" {float(confidence):.0%}"
+
+        track_text = ""
+        if track_id is not None:
+            try:
+                track_text = f" #T{int(track_id)}"
+            except Exception:
+                track_text = ""
+
+        label = f"{class_name}{confidence_text}{track_text}"
+        text_x = max(x1, 0)
+        text_y = max(y1 - 8, 16)
+        cv2.putText(
+            output,
+            label,
+            (text_x, text_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    detected = bool(details.get("detected"))
+    banner = "LIVE DETECTION"
+    if detected:
+        confidence = details.get("confidence")
+        if isinstance(confidence, (int, float)):
+            banner = f"COLLISION CANDIDATE {float(confidence):.0%}"
+        else:
+            banner = "COLLISION CANDIDATE"
+
+    banner_color = (0, 0, 255) if detected else (0, 140, 255)
+    cv2.putText(
+        output,
+        banner,
+        (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.75,
+        banner_color,
+        2,
+        cv2.LINE_AA,
+    )
+
+    return output
+
 def _normalize_camera_status(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -323,6 +439,8 @@ class CameraPreBufferWorker:
         self.latest_frame_ts = None
         self.latest_jpeg = None
         self.latest_jpeg_ts = None
+        self.latest_inference = None
+        self.latest_inference_ts = None
         self._buffer_interval_ns = int(1_000_000_000 / max(target_fps, 1))
         self._last_buffer_append_ns = 0
         self._drain_grabs = LIVE_STREAM_DRAIN_GRABS
@@ -380,6 +498,17 @@ class CameraPreBufferWorker:
             if self.latest_jpeg is None or self.latest_jpeg_ts is None:
                 return None, None
             return self.latest_jpeg, self.latest_jpeg_ts
+
+    def set_latest_inference(self, inference: Optional[dict], frame_ts_ns: Optional[int] = None):
+        with self.lock:
+            self.latest_inference = copy.deepcopy(inference) if isinstance(inference, dict) else None
+            self.latest_inference_ts = int(frame_ts_ns) if frame_ts_ns else time.time_ns()
+
+    def get_latest_inference_packet(self):
+        with self.lock:
+            if self.latest_inference is None or self.latest_inference_ts is None:
+                return None, None
+            return copy.deepcopy(self.latest_inference), self.latest_inference_ts
 
     def add_live_subscriber(self):
         with self.lock:
@@ -707,6 +836,16 @@ class LiveCollisionDetectionService:
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
 
+    def reset_camera_state(self, camera_id: str):
+        camera_key = str(camera_id or "").strip()
+        if not camera_key:
+            return
+        self._camera_histories.pop(camera_key, None)
+        self._camera_pair_collision_frames.pop(camera_key, None)
+        self._camera_next_track_id.pop(camera_key, None)
+        self._last_processed_frame_ts.pop(camera_key, None)
+        self._last_detection_ts.pop(camera_key, None)
+
     async def test_camera(self, camera_id: str, create_event: bool = True) -> dict:
         if self.db is None:
             raise HTTPException(503, "Detection service is not initialized.")
@@ -737,6 +876,7 @@ class LiveCollisionDetectionService:
                 "detail": inference.get("error") or "No collision detected on this frame.",
                 "candidate_count": int(inference.get("candidate_count", 0)),
                 "top_candidates": inference.get("top_candidates") or [],
+                "boxes": inference.get("boxes") or [],
             }
 
         confidence = float(inference["confidence"])
@@ -754,6 +894,13 @@ class LiveCollisionDetectionService:
                 severity=severity,
                 description=description,
                 camera_doc=camera,
+                detection_metadata={
+                    "boxes": inference.get("boxes") or [],
+                    "pair_id": inference.get("pair_id") or None,
+                    "frame_width": int(frame.shape[1]) if getattr(frame, "shape", None) is not None and len(frame.shape) >= 2 else None,
+                    "frame_height": int(frame.shape[0]) if getattr(frame, "shape", None) is not None and len(frame.shape) >= 2 else None,
+                    "video_collision_at_second": float(COLLISION_PRE_EVENT_SECONDS),
+                },
             )
             created_collision_id = created.get("id")
 
@@ -769,6 +916,7 @@ class LiveCollisionDetectionService:
             "collision_id": created_collision_id,
             "candidate_count": int(inference.get("candidate_count", 0)),
             "top_candidates": inference.get("top_candidates") or [],
+            "boxes": inference.get("boxes") or [],
         }
 
     async def _run_loop(self):
@@ -807,14 +955,16 @@ class LiveCollisionDetectionService:
             return
         self._last_processed_frame_ts[camera_id] = frame_ts
 
+        loop = asyncio.get_running_loop()
+        inference = await loop.run_in_executor(None, self._detect_frame_sync, camera_id, frame)
+        worker.set_latest_inference(inference, frame_ts)
+
+        if not inference.get("detected"):
+            return
+
         now_ts = time.time()
         last_detection_ts = self._last_detection_ts.get(camera_id, 0.0)
         if self.cooldown_seconds > 0 and (now_ts - last_detection_ts) < self.cooldown_seconds:
-            return
-
-        loop = asyncio.get_running_loop()
-        inference = await loop.run_in_executor(None, self._detect_frame_sync, camera_id, frame)
-        if not inference.get("detected"):
             return
 
         confidence = float(inference["confidence"])
@@ -830,6 +980,13 @@ class LiveCollisionDetectionService:
             severity=severity,
             description=description,
             camera_doc=camera,
+            detection_metadata={
+                "boxes": inference.get("boxes") or [],
+                "pair_id": inference.get("pair_id") or None,
+                "frame_width": int(frame.shape[1]) if getattr(frame, "shape", None) is not None and len(frame.shape) >= 2 else None,
+                "frame_height": int(frame.shape[0]) if getattr(frame, "shape", None) is not None and len(frame.shape) >= 2 else None,
+                "video_collision_at_second": float(COLLISION_PRE_EVENT_SECONDS),
+            },
         )
 
         self._last_detection_ts[camera_id] = now_ts
@@ -920,6 +1077,8 @@ class LiveCollisionDetectionService:
             return {
                 "detected": False,
                 "error": self._last_error or "YOLO model is unavailable.",
+                "boxes": [],
+                "pair_id": None,
             }
 
         try:
@@ -932,10 +1091,15 @@ class LiveCollisionDetectionService:
         except Exception as exc:
             self._last_error = f"Inference failed: {exc}"
             logger.exception("YOLO inference failed")
-            return {"detected": False, "error": self._last_error}
+            return {"detected": False, "error": self._last_error, "boxes": [], "pair_id": None}
 
         if frame is None or getattr(frame, "shape", None) is None or len(frame.shape) < 2:
-            return {"detected": False, "error": "Invalid frame for collision analysis."}
+            return {
+                "detected": False,
+                "error": "Invalid frame for collision analysis.",
+                "boxes": [],
+                "pair_id": None,
+            }
 
         frame_height = int(frame.shape[0])
         frame_width = int(frame.shape[1])
@@ -1190,6 +1354,21 @@ class LiveCollisionDetectionService:
                         detected_confidence = pair_confidence
 
         top_candidates = sorted(all_candidates, key=lambda item: item["confidence"], reverse=True)[:5]
+        overlay_boxes = []
+        for vehicle in vehicles:
+            coords = vehicle.get("coords")
+            if not isinstance(coords, (list, tuple)) or len(coords) != 4:
+                continue
+            overlay_boxes.append(
+                {
+                    "coords": [float(coords[0]), float(coords[1]), float(coords[2]), float(coords[3])],
+                    "class_id": int(vehicle.get("class_id", -1)),
+                    "class_name": str(vehicle.get("class_name", "unknown")),
+                    "confidence": float(vehicle.get("confidence", 0.0)),
+                    "track_id": int(vehicle.get("id")) if vehicle.get("id") is not None else None,
+                    "is_ghost": bool(vehicle.get("is_ghost")),
+                }
+            )
 
         if detected_pair is not None:
             self._last_error = ""
@@ -1201,6 +1380,7 @@ class LiveCollisionDetectionService:
                 "pair_id": [int(detected_pair[0]), int(detected_pair[1])],
                 "candidate_count": len(detections),
                 "top_candidates": top_candidates,
+                "boxes": overlay_boxes,
             }
 
         return {
@@ -1208,6 +1388,8 @@ class LiveCollisionDetectionService:
             "error": "No collision detected by heuristic on current frame.",
             "candidate_count": len(detections),
             "top_candidates": top_candidates,
+            "boxes": overlay_boxes,
+            "pair_id": None,
         }
 
     def _ensure_model_loaded_sync(self):
@@ -1242,7 +1424,7 @@ class LiveCollisionDetectionService:
 
 detection_service = LiveCollisionDetectionService()
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ App ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 app = FastAPI(title="SafeSight API", version="1.0.0")
 
 app.add_middleware(
@@ -1253,7 +1435,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── DB lifecycle ──────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ DB lifecycle ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 @app.on_event("startup")
 async def startup():
     app.client = AsyncIOMotorClient(MONGO_URL)
@@ -1261,6 +1443,7 @@ async def startup():
     app.fs_bucket = AsyncIOMotorGridFSBucket(app.db)
     logger.info(f"Connected to MongoDB: {DB_NAME}")
     await ensure_default_captain(app.db)
+    await ensure_default_responder(app.db)
 
     if PREBUFFER_ACTIVE_CAMERAS_ON_STARTUP:
         cameras = await app.db.cameras.find({"status": "active"}).to_list(None)
@@ -1278,7 +1461,7 @@ async def shutdown():
 def get_db():
     return app.db
 
-# ── Security ──────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Security ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2  = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
@@ -1336,12 +1519,89 @@ def captain_only(user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Captain access required")
     return user
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ΓöÇΓöÇ Helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 def clean(doc: dict) -> dict:
     """Remove MongoDB _id and return serialisable dict."""
     doc.pop("_id", None)
     doc.pop("hashed_password", None)
     return doc
+
+def _sign_public_video_token(video_file_id: str, expires_at: int) -> str:
+    message = f"{video_file_id}:{int(expires_at)}".encode("utf-8")
+    digest = hmac.new(PUBLIC_VIDEO_TOKEN_SECRET.encode("utf-8"), message, "sha256").digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+def _issue_public_video_token(video_file_id: str) -> Tuple[str, int]:
+    expires_at = int(time.time()) + PUBLIC_VIDEO_TOKEN_TTL_SECONDS
+    signature = _sign_public_video_token(video_file_id, expires_at)
+    return signature, expires_at
+
+def _verify_public_video_token(video_file_id: str, expires_at: int, signature: str) -> bool:
+    if not video_file_id or not signature:
+        return False
+    if int(expires_at) < int(time.time()):
+        return False
+
+    expected = _sign_public_video_token(video_file_id, int(expires_at))
+    return hmac.compare_digest(expected, str(signature).strip())
+
+def _make_public_clip_url(collision_id: str, video_file_id: Optional[str]) -> Optional[str]:
+    file_id = str(video_file_id or "").strip()
+    collision_value = str(collision_id or "").strip()
+    if not file_id or not collision_value:
+        return None
+
+    signature, expires_at = _issue_public_video_token(file_id)
+    query = urlencode({"file_id": file_id, "exp": str(expires_at), "sig": signature})
+    return f"{PUBLIC_BASE_URL}/api/public/clips/{collision_value}?{query}"
+
+def _serialize_collision(collision: dict) -> dict:
+    payload = clean(dict(collision))
+    payload["video_public_url"] = _make_public_clip_url(
+        payload.get("id"),
+        payload.get("video_file_id"),
+    )
+    return payload
+
+async def _load_collision_video_bytes(collision: dict) -> Tuple[bytes, str, str]:
+    if collision.get("video_status") == "processing":
+        raise HTTPException(409, "Collision clip is still being generated.")
+
+    video_file_id = collision.get("video_file_id")
+    if not video_file_id:
+        raise HTTPException(404, "No video clip available for this collision.")
+
+    try:
+        object_id = ObjectId(video_file_id)
+    except (InvalidId, TypeError):
+        raise HTTPException(500, "Stored collision video reference is invalid.")
+
+    try:
+        grid_out = await app.fs_bucket.open_download_stream(object_id)
+        video_bytes = await grid_out.read()
+    except Exception:
+        raise HTTPException(404, "Collision clip file was not found in storage.")
+
+    # Backward compatibility for older clips that were encoded as mp4v/FMP4.
+    stored_codec = str(collision.get("video_codec") or "").strip().lower()
+    probed_codec = _probe_mp4_codec_hint(video_bytes)
+    timestamp_raw = str(collision.get("timestamp") or "").strip()
+    has_timezone = bool(re.search(r"(Z|[+\-]\d{2}:\d{2})$", timestamp_raw))
+    needs_transcode = (
+        stored_codec != "h264"
+        or not has_timezone
+        or (stored_codec == "h264" and probed_codec and probed_codec != "h264")
+    )
+
+    if needs_transcode:
+        loop = asyncio.get_running_loop()
+        transcoded_bytes = await loop.run_in_executor(None, _transcode_mp4_bytes_to_h264, video_bytes)
+        if transcoded_bytes:
+            video_bytes = transcoded_bytes
+
+    media_type = collision.get("video_mime_type", "video/mp4")
+    filename = collision.get("video_filename") or f"collision_{collision.get('id', 'clip')}.mp4"
+    return video_bytes, media_type, filename
 
 def _format_alert_timestamp(ts: str) -> str:
     parsed = _parse_iso_datetime(ts)
@@ -1352,13 +1612,186 @@ def _format_alert_timestamp(ts: str) -> str:
 def _build_collision_alert_message(collision: dict) -> str:
     confidence = collision.get("confidence_score")
     confidence_text = f"{confidence:.0%}" if isinstance(confidence, (int, float)) else "N/A"
-    return (
+    message = (
         f"COLLISION ALERT: {str(collision.get('severity', 'unknown')).upper()} severity at "
         f"{collision.get('camera_name', 'Unknown camera')} "
         f"({collision.get('camera_location', 'Unknown location')}) on "
         f"{_format_alert_timestamp(collision.get('timestamp', ''))}. "
         f"Confidence: {confidence_text}"
     )
+
+    public_url = collision.get("video_public_url") or _make_public_clip_url(
+        collision.get("id"),
+        collision.get("video_file_id"),
+    )
+    if public_url:
+        message = f"{message}. Replay: {public_url}"
+
+    return message
+
+def _normalize_detection_boxes(raw_boxes: Optional[List[dict]]) -> List[dict]:
+    normalized = []
+    if not isinstance(raw_boxes, list):
+        return normalized
+
+    for raw_box in raw_boxes[:LIVE_OVERLAY_MAX_BOXES]:
+        if not isinstance(raw_box, dict):
+            continue
+
+        coords = raw_box.get("coords")
+        if not isinstance(coords, (list, tuple)) or len(coords) != 4:
+            continue
+
+        try:
+            x1, y1, x2, y2 = [float(value) for value in coords]
+        except Exception:
+            continue
+
+        if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
+            continue
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        class_id = -1
+        try:
+            if raw_box.get("class_id") is not None:
+                class_id = int(raw_box.get("class_id"))
+        except Exception:
+            class_id = -1
+
+        confidence_value = 0.0
+        try:
+            confidence_value = float(raw_box.get("confidence") or 0.0)
+        except Exception:
+            confidence_value = 0.0
+        if not math.isfinite(confidence_value):
+            confidence_value = 0.0
+
+        normalized_box = {
+            "coords": [x1, y1, x2, y2],
+            "class_id": class_id,
+            "class_name": str(raw_box.get("class_name") or "object"),
+            "confidence": confidence_value,
+            "track_id": None,
+            "is_ghost": bool(raw_box.get("is_ghost")),
+        }
+
+        try:
+            if raw_box.get("track_id") is not None:
+                normalized_box["track_id"] = int(raw_box.get("track_id"))
+        except Exception:
+            normalized_box["track_id"] = None
+
+        normalized.append(normalized_box)
+
+    return normalized
+
+def _apply_collision_detection_metadata(doc: dict, detection_metadata: Optional[dict]) -> None:
+    if not isinstance(doc, dict) or not isinstance(detection_metadata, dict):
+        return
+
+    boxes = _normalize_detection_boxes(
+        detection_metadata.get("detection_boxes")
+        if "detection_boxes" in detection_metadata
+        else detection_metadata.get("boxes")
+    )
+    doc["detection_boxes"] = boxes
+
+    pair_raw = detection_metadata.get("detection_pair_id")
+    if pair_raw is None:
+        pair_raw = detection_metadata.get("pair_id")
+
+    pair_value = None
+    if isinstance(pair_raw, (list, tuple)) and len(pair_raw) == 2:
+        try:
+            pair_value = [int(pair_raw[0]), int(pair_raw[1])]
+        except Exception:
+            pair_value = None
+    doc["detection_pair_id"] = pair_value
+
+    frame_width_raw = detection_metadata.get("detection_frame_width")
+    if frame_width_raw is None:
+        frame_width_raw = detection_metadata.get("frame_width")
+
+    frame_height_raw = detection_metadata.get("detection_frame_height")
+    if frame_height_raw is None:
+        frame_height_raw = detection_metadata.get("frame_height")
+
+    frame_width_value = None
+    frame_height_value = None
+    try:
+        frame_width_candidate = int(frame_width_raw) if frame_width_raw is not None else None
+        if frame_width_candidate and frame_width_candidate > 0:
+            frame_width_value = frame_width_candidate
+    except Exception:
+        frame_width_value = None
+
+    try:
+        frame_height_candidate = int(frame_height_raw) if frame_height_raw is not None else None
+        if frame_height_candidate and frame_height_candidate > 0:
+            frame_height_value = frame_height_candidate
+    except Exception:
+        frame_height_value = None
+
+    doc["detection_frame_width"] = frame_width_value
+    doc["detection_frame_height"] = frame_height_value
+
+    collision_second_raw = detection_metadata.get("video_collision_at_second")
+    if collision_second_raw is None:
+        collision_second_raw = detection_metadata.get("collision_at_second")
+
+    if collision_second_raw is None:
+        return
+
+    try:
+        collision_second = float(collision_second_raw)
+    except Exception:
+        return
+
+    if math.isfinite(collision_second):
+        doc["video_collision_at_second"] = max(collision_second, 0.0)
+
+def _extract_provider_error(provider_body: Optional[dict], status_code: int, provider_fail_reason: Optional[str]) -> str:
+    if provider_fail_reason:
+        return str(provider_fail_reason)
+
+    if isinstance(provider_body, dict):
+        provider_errors = provider_body.get("errors")
+        if provider_errors is not None:
+            if isinstance(provider_errors, str):
+                cleaned = provider_errors.strip()
+                if cleaned:
+                    return cleaned
+            try:
+                return json.dumps(provider_errors, ensure_ascii=False)[:240]
+            except Exception:
+                return str(provider_errors)[:240]
+
+    return f"Provider returned HTTP {status_code}"
+
+def _provider_rejected_links(send_result: dict) -> bool:
+    if not isinstance(send_result, dict):
+        return False
+
+    haystack = " ".join(
+        [
+            str(send_result.get("error") or ""),
+            str(send_result.get("response") or ""),
+        ]
+    ).lower()
+
+    has_link_term = ("link" in haystack) or ("url" in haystack)
+    has_block_term = any(token in haystack for token in ("prohibit", "forbid", "not allowed", "blocked"))
+    return has_link_term and has_block_term
+
+def _strip_urls_from_alert_message(message: str) -> str:
+    text = str(message or "")
+    # Remove replay section first to keep punctuation natural.
+    text = re.sub(r"\.?\s*Replay:\s*https?://\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"https?://\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"\s+([.,!?;:])", r"\1", text)
+    return text.strip()
 
 def _build_sms_payload(recipient_phone: str, message: str) -> dict:
     payload = {
@@ -1406,28 +1839,31 @@ async def _send_sms_via_api(recipient_phone: str, message: str) -> dict:
     if auth_value:
         headers[SMS_API_AUTH_HEADER or "Authorization"] = auth_value
 
-    try:
-        payload = _build_sms_payload(recipient_phone, message)
+    async def _dispatch(message_text: str) -> dict:
+        payload = _build_sms_payload(recipient_phone, message_text)
         async with httpx.AsyncClient(timeout=SMS_API_TIMEOUT_SECONDS) as client:
             response = await client.post(SMS_API_URL, json=payload, headers=headers)
 
+        provider_body = None
         provider_message_status = None
         provider_reference_id = None
         provider_fail_reason = None
 
         try:
-            body = response.json()
-            if isinstance(body, dict) and isinstance(body.get("message"), dict):
-                message_data = body["message"]
-                status_raw = message_data.get("status")
-                provider_message_status = str(status_raw).lower().strip() if status_raw is not None else None
-                provider_reference_id = message_data.get("reference_id")
-                provider_fail_reason = message_data.get("fail_reason")
+            parsed_body = response.json()
+            if isinstance(parsed_body, dict):
+                provider_body = parsed_body
+                if isinstance(parsed_body.get("message"), dict):
+                    message_data = parsed_body["message"]
+                    status_raw = message_data.get("status")
+                    provider_message_status = str(status_raw).lower().strip() if status_raw is not None else None
+                    provider_reference_id = message_data.get("reference_id")
+                    provider_fail_reason = message_data.get("fail_reason")
         except Exception:
-            pass
+            provider_body = None
 
         ok = 200 <= response.status_code < 300 and provider_message_status != "failed"
-        error = None if ok else (provider_fail_reason or f"Provider returned HTTP {response.status_code}")
+        error = None if ok else _extract_provider_error(provider_body, response.status_code, provider_fail_reason)
 
         return {
             "ok": ok,
@@ -1435,11 +1871,35 @@ async def _send_sms_via_api(recipient_phone: str, message: str) -> dict:
             "response": response.text[:500],
             "provider_message_status": provider_message_status,
             "provider_reference_id": provider_reference_id,
+            "message_used": message_text,
             "error": error,
         }
+
+    try:
+        initial_result = await _dispatch(message)
+
+        has_url = bool(re.search(r"https?://\S+", str(message or ""), flags=re.IGNORECASE))
+        if (
+            not initial_result.get("ok")
+            and has_url
+            and SMS_RETRY_WITHOUT_LINKS_ON_BLOCK
+            and _provider_rejected_links(initial_result)
+        ):
+            fallback_message = _strip_urls_from_alert_message(message)
+            if fallback_message and fallback_message != str(message).strip():
+                fallback_result = await _dispatch(fallback_message)
+                fallback_result["used_link_fallback"] = True
+                fallback_result["initial_error"] = initial_result.get("error")
+
+                if fallback_result.get("ok"):
+                    logger.info("SMS sent without replay link after provider rejected links")
+
+                return fallback_result
+
+        return initial_result
     except Exception as exc:
         logger.exception("SMS provider call failed")
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), "message_used": message}
 
 async def _store_alert_record(
     db,
@@ -1478,9 +1938,14 @@ def _initial_collision_video_fields() -> dict:
         "video_duration_seconds": COLLISION_CLIP_SECONDS,
         "video_pre_event_seconds": COLLISION_PRE_EVENT_SECONDS,
         "video_post_event_seconds": COLLISION_POST_EVENT_SECONDS,
+        "video_collision_at_second": float(COLLISION_PRE_EVENT_SECONDS),
         "video_recorded_at": None,
         "video_codec": None,
         "video_error": None,
+        "detection_boxes": [],
+        "detection_pair_id": None,
+        "detection_frame_width": None,
+        "detection_frame_height": None,
     }
 
 async def _create_collision_entry(
@@ -1491,6 +1956,7 @@ async def _create_collision_entry(
     description: Optional[str] = None,
     timestamp: Optional[datetime] = None,
     camera_doc: Optional[dict] = None,
+    detection_metadata: Optional[dict] = None,
 ):
     camera = camera_doc or await db.cameras.find_one({"id": camera_id})
     cam_name = camera["name"] if camera else "Unknown"
@@ -1512,8 +1978,14 @@ async def _create_collision_entry(
         "timestamp": ts_value.isoformat(),
         "acknowledged_by": None,
         "acknowledged_at": None,
+        "responded_by": None,
+        "responded_at": None,
+        "resolved_by": None,
+        "resolved_at": None,
         **_initial_collision_video_fields(),
     }
+
+    _apply_collision_detection_metadata(doc, detection_metadata)
 
     await db.collisions.insert_one(doc)
     await _queue_collision_video_capture(db, doc, camera)
@@ -1627,6 +2099,7 @@ async def _capture_and_store_collision_video(db, collision: dict, camera: dict):
     target_pre_frames = COLLISION_PRE_EVENT_SECONDS * COLLISION_CLIP_FPS
     if len(pre_frames) > target_pre_frames:
         pre_frames = pre_frames[-target_pre_frames:]
+    collision_second = min(len(pre_frames) / float(COLLISION_CLIP_FPS), float(COLLISION_CLIP_SECONDS))
 
     frames = list(pre_frames)
     total_frames_target = COLLISION_CLIP_SECONDS * COLLISION_CLIP_FPS
@@ -1734,6 +2207,7 @@ async def _capture_and_store_collision_video(db, collision: dict, camera: dict):
                     "video_duration_seconds": COLLISION_CLIP_SECONDS,
                     "video_pre_event_seconds": COLLISION_PRE_EVENT_SECONDS,
                     "video_post_event_seconds": COLLISION_POST_EVENT_SECONDS,
+                    "video_collision_at_second": round(collision_second, 3),
                     "video_recorded_at": _utc_now_iso(),
                     "video_codec": video_codec,
                     "video_error": None,
@@ -1764,6 +2238,170 @@ async def _queue_collision_video_capture(db, collision: dict, camera: Optional[d
 
     asyncio.create_task(_capture_and_store_collision_video(db, collision, camera))
 
+def _sanitize_upload_filename(raw_filename: Optional[str]) -> str:
+    candidate = str(raw_filename or "").strip()
+    if not candidate:
+        candidate = f"simulation_{int(time.time())}.mp4"
+
+    basename = Path(candidate).name
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", basename)
+    if not safe_name:
+        safe_name = f"simulation_{int(time.time())}.mp4"
+
+    if "." not in safe_name:
+        safe_name = f"{safe_name}.mp4"
+
+    return safe_name[:160]
+
+async def _save_upload_to_temp_file(video_file: UploadFile, max_bytes: int) -> Tuple[str, int]:
+    suffix = Path(video_file.filename or "").suffix or ".mp4"
+    temp_path = None
+    bytes_written = 0
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_path = temp_file.name
+            while True:
+                chunk = await video_file.read(1024 * 1024)
+                if not chunk:
+                    break
+
+                bytes_written += len(chunk)
+                if bytes_written > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"Simulation upload exceeds the maximum size of "
+                            f"{SIMULATION_MAX_UPLOAD_MB:.0f} MB."
+                        ),
+                    )
+
+                temp_file.write(chunk)
+
+        if bytes_written <= 0:
+            raise HTTPException(400, "Uploaded simulation video is empty.")
+
+        return temp_path, bytes_written
+    except Exception:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        raise
+
+def _normalize_codec_hint(codec_raw: str) -> str:
+    token = str(codec_raw or "").strip().lower()
+    token = "".join(ch for ch in token if ch.isalnum())
+    if token in {"avc1", "h264", "x264"}:
+        return "h264"
+    if token in {"mp4v", "fmp4"}:
+        return "mp4v"
+    return token
+
+def _analyze_simulation_video_sync(video_path: str, simulation_camera_id: str) -> dict:
+    if cv2 is None:
+        raise RuntimeError("OpenCV is not installed on backend.")
+
+    capture = cv2.VideoCapture(video_path)
+    if capture is None or not capture.isOpened():
+        raise RuntimeError("Unable to open uploaded simulation video.")
+
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        if not math.isfinite(fps) or fps <= 0:
+            fps = SIMULATION_ANALYSIS_FPS
+
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if frame_count < 0:
+            frame_count = 0
+
+        duration_seconds = None
+        if frame_count > 0 and fps > 0:
+            duration_seconds = frame_count / fps
+
+        sampled_every_n_frames = 1
+        if fps > 0:
+            sampled_every_n_frames = max(int(round(fps / SIMULATION_ANALYSIS_FPS)), 1)
+
+        fourcc_value = int(capture.get(cv2.CAP_PROP_FOURCC) or 0)
+        fourcc = ""
+        if fourcc_value > 0:
+            fourcc = "".join(chr((fourcc_value >> (8 * idx)) & 0xFF) for idx in range(4))
+        codec_hint = _normalize_codec_hint(fourcc)
+
+        analyzed_frames = 0
+        sampled_frames = 0
+        frame_index = -1
+        best_inference = None
+        best_confidence = 0.0
+        best_frame_index = None
+        best_frame_width = None
+        best_frame_height = None
+
+        while analyzed_frames < SIMULATION_MAX_ANALYZED_FRAMES:
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                break
+
+            frame_index += 1
+            sampled_frames += 1
+            if sampled_every_n_frames > 1 and (frame_index % sampled_every_n_frames) != 0:
+                continue
+
+            inference = detection_service._detect_frame_sync(simulation_camera_id, frame)
+            analyzed_frames += 1
+
+            if not inference.get("detected"):
+                continue
+
+            confidence = float(inference.get("confidence") or 0.0)
+            if best_inference is None or confidence >= best_confidence:
+                best_confidence = confidence
+                best_inference = inference
+                best_frame_index = frame_index
+                if getattr(frame, "shape", None) is not None and len(frame.shape) >= 2:
+                    best_frame_height = int(frame.shape[0])
+                    best_frame_width = int(frame.shape[1])
+
+        detected = best_inference is not None
+        detected_at_second = None
+        if detected and best_frame_index is not None and fps > 0:
+            detected_at_second = float(best_frame_index) / float(fps)
+
+        detail = ""
+        if not detected:
+            if analyzed_frames <= 0:
+                detail = "No frames could be analyzed from the uploaded simulation video."
+            else:
+                detail = "No collision candidate detected in sampled simulation frames."
+
+        return {
+            "detected": detected,
+            "detail": detail,
+            "fps": float(fps),
+            "frame_count": int(frame_count),
+            "duration_seconds": float(duration_seconds) if duration_seconds is not None else None,
+            "sampled_frames": int(sampled_frames),
+            "analyzed_frames": int(analyzed_frames),
+            "sampled_every_n_frames": int(sampled_every_n_frames),
+            "detected_frame_index": int(best_frame_index) if best_frame_index is not None else None,
+            "detected_at_second": detected_at_second,
+            "confidence": float(best_confidence) if detected else None,
+            "class_name": best_inference.get("class_name") if detected else None,
+            "class_id": best_inference.get("class_id") if detected else None,
+            "candidate_count": int(best_inference.get("candidate_count", 0)) if detected else 0,
+            "top_candidates": best_inference.get("top_candidates") if detected else [],
+            "pair_id": best_inference.get("pair_id") if detected else None,
+            "boxes": best_inference.get("boxes") if detected else [],
+            "frame_width": best_frame_width if detected else None,
+            "frame_height": best_frame_height if detected else None,
+            "codec_hint": codec_hint,
+        }
+    finally:
+        capture.release()
+        detection_service.reset_camera_state(simulation_camera_id)
+
 async def ensure_default_captain(db):
     if not await db.users.find_one({"role": "captain"}):
         await db.users.insert_one({
@@ -1775,9 +2413,20 @@ async def ensure_default_captain(db):
         })
         logger.info("Default captain account created  (user: captain / pass: password)")
 
-# ══════════════════════════════════════════════════════════════════════════════
+async def ensure_default_responder(db):
+    if not await db.users.find_one({"username": "responder"}):
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()), "username": "responder",
+            "email": "responder@safesight.local", "full_name": "Default Responder",
+            "role": "responder", "phone_number": "+639123456780",
+            "is_active": True, "hashed_password": hash_pw("password"),
+            "created_at": datetime.utcnow().isoformat()
+        })
+        logger.info("Default responder account created  (user: responder / pass: password)")
+
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # AUTH
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 @app.post("/api/auth/token")
 async def login(form: OAuth2PasswordRequestForm = Depends(), db=Depends(get_db)):
     user = await db.users.find_one({"username": form.username})
@@ -1789,9 +2438,9 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db=Depends(get_db))
 async def me(user=Depends(get_current_user)):
     return clean(dict(user))
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # CAMERAS
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 def _camera_failed_detail_from_worker(worker: CameraPreBufferWorker) -> str:
     snapshot = worker.get_health_snapshot()
     reason = snapshot.get("last_failure_reason") or "Camera stream became unavailable"
@@ -1950,6 +2599,12 @@ async def _camera_mjpeg_stream_generator(
     last_payload_ts = 0
     stream_started_ns = time.time_ns()
     health_probe_clock = 0.0
+    use_overlay = LIVE_STREAM_OVERLAY_ENABLED and cv2 is not None
+    stale_inference_ns = int(max(LIVE_OVERLAY_INFERENCE_INTERVAL_SECONDS * 6.0, 2.0) * 1_000_000_000)
+    overlay_inference_interval_ns = int(max(LIVE_OVERLAY_INFERENCE_INTERVAL_SECONDS, 0.05) * 1_000_000_000)
+    overlay_inference_future = None
+    overlay_last_inference_request_ns = 0
+    overlay_state_camera_id = f"overlay-preview:{camera_id}" if use_overlay else None
     worker.add_live_subscriber()
 
     try:
@@ -1957,9 +2612,86 @@ async def _camera_mjpeg_stream_generator(
             if await request.is_disconnected():
                 break
 
-            payload, payload_ts = worker.get_latest_jpeg_packet()
+            payload = None
+            frame = None
+            if use_overlay:
+                frame, payload_ts = worker.get_latest_frame_packet()
+            else:
+                payload, payload_ts = worker.get_latest_jpeg_packet()
 
             # Avoid sending stale payloads from a previous client session.
+            if payload is None or payload_ts is None or payload_ts < stream_started_ns:
+                if use_overlay and frame is not None and payload_ts is not None and payload_ts >= stream_started_ns:
+                    pass
+                else:
+                    now_clock = time.perf_counter()
+                    if now_clock - health_probe_clock >= 1.0:
+                        health_probe_clock = now_clock
+                        if worker.is_reconnect_stalled(CAMERA_RECONNECT_FAIL_AFTER_SECONDS):
+                            detail = _camera_failed_detail_from_worker(worker)
+                            await _mark_camera_failed(db, camera_id, detail)
+                            break
+                    await asyncio.sleep(0.005)
+                    continue
+
+            if use_overlay:
+                frame_for_live = _resize_frame_for_live(frame)
+                inference, inference_ts = worker.get_latest_inference_packet()
+
+                if overlay_inference_future is not None and overlay_inference_future.done():
+                    try:
+                        inferred = overlay_inference_future.result()
+                        if isinstance(inferred, dict):
+                            worker.set_latest_inference(inferred, payload_ts)
+                            inference, inference_ts = worker.get_latest_inference_packet()
+                    except Exception:
+                        pass
+                    finally:
+                        overlay_inference_future = None
+
+                inference_stale = (
+                    inference is None
+                    or inference_ts is None
+                    or (payload_ts - inference_ts) > stale_inference_ns
+                )
+                now_ns = time.time_ns()
+                if (
+                    inference_stale
+                    and overlay_inference_future is None
+                    and (now_ns - overlay_last_inference_request_ns) >= overlay_inference_interval_ns
+                    and overlay_state_camera_id
+                ):
+                    try:
+                        inference_frame = frame.copy()
+                    except Exception:
+                        inference_frame = frame_for_live
+
+                    loop = asyncio.get_running_loop()
+                    overlay_inference_future = loop.run_in_executor(
+                        None,
+                        detection_service._detect_frame_sync,
+                        overlay_state_camera_id,
+                        inference_frame,
+                    )
+                    overlay_last_inference_request_ns = now_ns
+
+                if (
+                    inference is not None
+                    and inference_ts is not None
+                    and (payload_ts - inference_ts) <= stale_inference_ns
+                ):
+                    frame_for_live = _draw_detection_overlay(frame_for_live, inference)
+
+                ok_jpeg, encoded_jpeg = cv2.imencode(
+                    ".jpg",
+                    frame_for_live,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), LIVE_STREAM_JPEG_QUALITY],
+                )
+                if not ok_jpeg:
+                    await asyncio.sleep(0.005)
+                    continue
+                payload = encoded_jpeg.tobytes()
+
             if payload is None or payload_ts is None or payload_ts < stream_started_ns:
                 now_clock = time.perf_counter()
                 if now_clock - health_probe_clock >= 1.0:
@@ -1986,6 +2718,10 @@ async def _camera_mjpeg_stream_generator(
             yield header + payload + b"\r\n"
             await asyncio.sleep(0)
     finally:
+        if overlay_inference_future is not None and not overlay_inference_future.done():
+            overlay_inference_future.cancel()
+        if overlay_state_camera_id:
+            detection_service.reset_camera_state(overlay_state_camera_id)
         worker.remove_live_subscriber()
 
 @app.get("/api/cameras/{camera_id}/stream")
@@ -2180,9 +2916,9 @@ async def delete_camera(camera_id: str, db=Depends(get_db), _=Depends(captain_on
     clip_recorder.remove_worker(camera_id)
     return {"message": "Camera deleted"}
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # COLLISIONS
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 class CollisionCreate(BaseModel):
     camera_id:        str
     confidence_score: float
@@ -2195,7 +2931,7 @@ class CollisionUpdate(BaseModel):
 @app.get("/api/collisions/")
 async def list_collisions(db=Depends(get_db), _=Depends(get_current_user)):
     docs = await db.collisions.find().sort("timestamp", -1).limit(200).to_list(None)
-    return [clean(d) for d in docs]
+    return [_serialize_collision(d) for d in docs]
 
 @app.post("/api/collisions/", status_code=201)
 async def create_collision(body: CollisionCreate, db=Depends(get_db), _=Depends(get_current_user)):
@@ -2206,73 +2942,291 @@ async def create_collision(body: CollisionCreate, db=Depends(get_db), _=Depends(
         severity=body.severity,
         description=body.description,
     )
-    return clean(doc)
+    return _serialize_collision(doc)
 
 @app.put("/api/collisions/{collision_id}")
 async def update_collision(collision_id: str, body: CollisionUpdate,
                            db=Depends(get_db), user=Depends(get_current_user)):
     update = {"status": body.status}
+    actor_name = user.get("full_name") or user.get("username") or "Unknown user"
+
     if body.status == "acknowledged":
-        update["acknowledged_by"]  = user["full_name"]
-        update["acknowledged_at"]  = datetime.utcnow().isoformat()
+        update["acknowledged_by"] = actor_name
+        update["acknowledged_at"] = _utc_now_iso()
+    elif body.status == "responded":
+        update["responded_by"] = actor_name
+        update["responded_at"] = _utc_now_iso()
+    elif body.status == "resolved":
+        update["resolved_by"] = actor_name
+        update["resolved_at"] = _utc_now_iso()
+
     result = await db.collisions.find_one_and_update(
         {"id": collision_id}, {"$set": update}, return_document=True)
     if not result:
         raise HTTPException(404, "Collision not found")
-    return clean(result)
+    return _serialize_collision(result)
 
 @app.get("/api/collisions/{collision_id}/video")
 async def get_collision_video(collision_id: str, db=Depends(get_db), _=Depends(get_current_user)):
     collision = await db.collisions.find_one({"id": collision_id})
     if not collision:
         raise HTTPException(404, "Collision not found")
-
-    if collision.get("video_status") == "processing":
-        raise HTTPException(409, "Collision clip is still being generated.")
-
-    video_file_id = collision.get("video_file_id")
-    if not video_file_id:
-        raise HTTPException(404, "No video clip available for this collision.")
-
-    try:
-        object_id = ObjectId(video_file_id)
-    except (InvalidId, TypeError):
-        raise HTTPException(500, "Stored collision video reference is invalid.")
-
-    try:
-        grid_out = await app.fs_bucket.open_download_stream(object_id)
-        video_bytes = await grid_out.read()
-    except Exception:
-        raise HTTPException(404, "Collision clip file was not found in storage.")
-
-    # Backward compatibility for older clips that were encoded as mp4v/FMP4.
-    stored_codec = str(collision.get("video_codec") or "").strip().lower()
-    probed_codec = _probe_mp4_codec_hint(video_bytes)
-    timestamp_raw = str(collision.get("timestamp") or "").strip()
-    has_timezone = bool(re.search(r"(Z|[+\-]\d{2}:\d{2})$", timestamp_raw))
-    needs_transcode = (
-        stored_codec != "h264"
-        or not has_timezone
-        or (stored_codec == "h264" and probed_codec and probed_codec != "h264")
-    )
-
-    if needs_transcode:
-        loop = asyncio.get_running_loop()
-        transcoded_bytes = await loop.run_in_executor(None, _transcode_mp4_bytes_to_h264, video_bytes)
-        if transcoded_bytes:
-            video_bytes = transcoded_bytes
-
-    filename = collision.get("video_filename") or f"collision_{collision_id}.mp4"
+    video_bytes, media_type, filename = await _load_collision_video_bytes(collision)
 
     return Response(
         content=video_bytes,
-        media_type=collision.get("video_mime_type", "video/mp4"),
+        media_type=media_type,
         headers={
             "Content-Disposition": f'inline; filename="{filename}"',
             "Content-Length": str(len(video_bytes)),
             "Accept-Ranges": "bytes",
         },
     )
+
+@app.get("/api/public/clips/{collision_id}")
+async def get_public_collision_video(
+    collision_id: str,
+    file_id: str = Query(...),
+    exp: int = Query(...),
+    sig: str = Query(...),
+    db=Depends(get_db),
+):
+    collision = await db.collisions.find_one({"id": collision_id})
+    if not collision:
+        raise HTTPException(404, "Collision not found")
+
+    stored_file_id = str(collision.get("video_file_id") or "").strip()
+    requested_file_id = str(file_id or "").strip()
+    if not stored_file_id or requested_file_id != stored_file_id:
+        raise HTTPException(404, "Clip file not found")
+
+    if not _verify_public_video_token(stored_file_id, int(exp), sig):
+        raise HTTPException(403, "Invalid or expired public clip token")
+
+    video_bytes, media_type, filename = await _load_collision_video_bytes(collision)
+    return Response(
+        content=video_bytes,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Content-Length": str(len(video_bytes)),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+    )
+
+@app.post("/api/collisions/simulate")
+async def simulate_collision_video(
+    video_file: UploadFile = File(...),
+    camera_id: Optional[str] = Query(default=None),
+    create_event: bool = Query(default=True),
+    send_sms: bool = Query(default=True),
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+):
+    if cv2 is None:
+        raise HTTPException(503, "OpenCV is not installed on backend.")
+
+    if video_file is None:
+        raise HTTPException(400, "Missing uploaded simulation video file.")
+
+    filename = _sanitize_upload_filename(video_file.filename)
+    simulation_camera_id = f"simulation:{uuid.uuid4()}"
+    temp_path = None
+
+    try:
+        max_upload_bytes = int(SIMULATION_MAX_UPLOAD_MB * 1024 * 1024)
+        temp_path, uploaded_size_bytes = await _save_upload_to_temp_file(video_file, max_upload_bytes)
+
+        loop = asyncio.get_running_loop()
+        analysis = await loop.run_in_executor(
+            None,
+            _analyze_simulation_video_sync,
+            temp_path,
+            simulation_camera_id,
+        )
+
+        response_payload = {
+            "detected": bool(analysis.get("detected")),
+            "filename": filename,
+            "uploaded_size_bytes": int(uploaded_size_bytes),
+            "fps": analysis.get("fps"),
+            "frame_count": analysis.get("frame_count"),
+            "duration_seconds": analysis.get("duration_seconds"),
+            "sampled_frames": analysis.get("sampled_frames"),
+            "analyzed_frames": analysis.get("analyzed_frames"),
+            "sampled_every_n_frames": analysis.get("sampled_every_n_frames"),
+            "detected_frame_index": analysis.get("detected_frame_index"),
+            "detected_at_second": analysis.get("detected_at_second"),
+            "candidate_count": int(analysis.get("candidate_count") or 0),
+            "top_candidates": analysis.get("top_candidates") or [],
+            "boxes": analysis.get("boxes") or [],
+            "detection_boxes": analysis.get("boxes") or [],
+            "detection_pair_id": analysis.get("pair_id") or None,
+            "detection_frame_width": analysis.get("frame_width"),
+            "detection_frame_height": analysis.get("frame_height"),
+            "class_name": analysis.get("class_name"),
+            "class_id": analysis.get("class_id"),
+            "confidence": analysis.get("confidence"),
+            "event_created": False,
+            "collision_id": None,
+            "timestamp": None,
+            "video_file_id": None,
+            "video_public_url": None,
+            "video_pre_event_seconds": None,
+            "video_post_event_seconds": None,
+            "video_duration_seconds": None,
+            "video_collision_at_second": analysis.get("detected_at_second"),
+            "sms_total_recipients": 0,
+            "sms_sent": 0,
+            "sms_failed": 0,
+        }
+
+        if not analysis.get("detected"):
+            response_payload["detail"] = analysis.get("detail") or "No collision detected in simulation video."
+            return response_payload
+
+        if not create_event:
+            response_payload["detail"] = "Collision candidate detected. Event creation is disabled for this run."
+            return response_payload
+
+        selected_camera = None
+        if camera_id:
+            selected_camera = await db.cameras.find_one({"id": camera_id})
+            if not selected_camera:
+                raise HTTPException(404, "Camera not found")
+
+        collision_id = str(uuid.uuid4())
+        source_camera_id = selected_camera.get("id") if selected_camera else f"simulation-upload:{collision_id}"
+        source_camera_name = selected_camera.get("name") if selected_camera else "Simulation Upload"
+        source_camera_location = selected_camera.get("location") if selected_camera else "Uploaded Video"
+
+        upload_stream_name = f"simulation_{collision_id}_{filename}"
+        clip_metadata = {
+            "collision_id": collision_id,
+            "camera_id": source_camera_id,
+            "recorded_at": _utc_now_iso(),
+            "duration_seconds": analysis.get("duration_seconds"),
+            "codec": analysis.get("codec_hint") or "",
+            "source": "simulation-upload",
+            "source_filename": filename,
+        }
+
+        with open(temp_path, "rb") as uploaded_stream:
+            file_id = await app.fs_bucket.upload_from_stream(
+                upload_stream_name,
+                uploaded_stream,
+                metadata=clip_metadata,
+            )
+
+        confidence = float(analysis.get("confidence") or 0.0)
+        severity = _severity_from_confidence(confidence)
+        detected_second = analysis.get("detected_at_second")
+        detected_second_text = (
+            f"{float(detected_second):.2f}s" if isinstance(detected_second, (int, float)) else "unknown time"
+        )
+        description = (
+            f"Simulation-detected collision from {filename} at {detected_second_text}. "
+            f"Class={analysis.get('class_name') or 'collision'}, confidence={confidence:.0%}."
+        )
+
+        duration_seconds = analysis.get("duration_seconds")
+        if not isinstance(duration_seconds, (int, float)) or duration_seconds <= 0:
+            duration_seconds = 0
+
+        collision_doc = {
+            "id": collision_id,
+            "camera_id": source_camera_id,
+            "camera_name": source_camera_name,
+            "camera_location": source_camera_location,
+            "confidence_score": confidence,
+            "severity": _normalize_collision_severity(severity),
+            "description": description,
+            "status": "pending",
+            "timestamp": _utc_now_iso(),
+            "acknowledged_by": None,
+            "acknowledged_at": None,
+            "responded_by": None,
+            "responded_at": None,
+            "resolved_by": None,
+            "resolved_at": None,
+            **_initial_collision_video_fields(),
+            "video_status": "ready",
+            "video_file_id": str(file_id),
+            "video_filename": upload_stream_name,
+            "video_mime_type": str(video_file.content_type or "video/mp4"),
+            "video_duration_seconds": float(duration_seconds),
+            "video_pre_event_seconds": 0,
+            "video_post_event_seconds": float(duration_seconds),
+            "video_collision_at_second": float(detected_second) if isinstance(detected_second, (int, float)) else 0.0,
+            "video_recorded_at": _utc_now_iso(),
+            "video_codec": analysis.get("codec_hint") or "",
+            "video_error": None,
+            "simulation_source_filename": filename,
+            "simulation_uploaded_by": user.get("id"),
+            "simulation_analyzed_frames": int(analysis.get("analyzed_frames") or 0),
+            "simulation_sampled_every_n_frames": int(analysis.get("sampled_every_n_frames") or 1),
+            "simulation_detected_frame_index": analysis.get("detected_frame_index"),
+            "simulation_detected_at_second": detected_second,
+        }
+
+        _apply_collision_detection_metadata(
+            collision_doc,
+            {
+                "boxes": analysis.get("boxes") or [],
+                "pair_id": analysis.get("pair_id") or None,
+                "frame_width": analysis.get("frame_width"),
+                "frame_height": analysis.get("frame_height"),
+                "video_collision_at_second": detected_second,
+            },
+        )
+
+        await db.collisions.insert_one(collision_doc)
+        collision_doc["video_public_url"] = _make_public_clip_url(
+            collision_doc.get("id"),
+            collision_doc.get("video_file_id"),
+        )
+
+        alert_summary = {"total_recipients": 0, "sent": 0, "failed": 0, "recipients": []}
+        if send_sms:
+            alert_summary = await _send_alerts(db, collision_doc)
+
+        response_payload.update(
+            {
+                "event_created": True,
+                "collision_id": collision_doc.get("id"),
+                "timestamp": collision_doc.get("timestamp"),
+                "video_file_id": collision_doc.get("video_file_id"),
+                "video_public_url": collision_doc.get("video_public_url"),
+                "video_pre_event_seconds": collision_doc.get("video_pre_event_seconds"),
+                "video_post_event_seconds": collision_doc.get("video_post_event_seconds"),
+                "video_duration_seconds": collision_doc.get("video_duration_seconds"),
+                "video_collision_at_second": collision_doc.get("video_collision_at_second"),
+                "camera_id": collision_doc.get("camera_id"),
+                "camera_name": collision_doc.get("camera_name"),
+                "camera_location": collision_doc.get("camera_location"),
+                "detection_boxes": collision_doc.get("detection_boxes") or [],
+                "detection_pair_id": collision_doc.get("detection_pair_id"),
+                "detection_frame_width": collision_doc.get("detection_frame_width"),
+                "detection_frame_height": collision_doc.get("detection_frame_height"),
+                "sms_total_recipients": int(alert_summary.get("total_recipients") or 0),
+                "sms_sent": int(alert_summary.get("sent") or 0),
+                "sms_failed": int(alert_summary.get("failed") or 0),
+            }
+        )
+
+        return response_payload
+    finally:
+        detection_service.reset_camera_state(simulation_camera_id)
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        try:
+            await video_file.close()
+        except Exception:
+            pass
 
 @app.post("/api/collisions/mock-detection")
 async def mock_collision(camera_id: str, db=Depends(get_db), _=Depends(get_current_user)):
@@ -2316,9 +3270,9 @@ async def test_detection_on_camera(
 ):
     return await detection_service.test_camera(camera_id, create_event=create_event)
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # USERS
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 class UserCreate(BaseModel):
     username:     str
     email:        str
@@ -2392,9 +3346,9 @@ async def delete_user(user_id: str, db=Depends(get_db), user=Depends(captain_onl
         raise HTTPException(404, "User not found")
     return {"message": "User deleted"}
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # ALERTS
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 class SmsTestRequest(BaseModel):
     camera_id: Optional[str] = None
     message: Optional[str] = None
@@ -2408,21 +3362,45 @@ async def list_alerts(db=Depends(get_db), user=Depends(get_current_user)):
 async def _send_alerts(db, collision: dict):
     """Send collision SMS alerts to active responders and persist delivery logs."""
     responders = await db.users.find({"is_active": True, "role": "responder"}).to_list(None)
+    summary = {
+        "total_recipients": len(responders),
+        "sent": 0,
+        "failed": 0,
+        "recipients": [],
+    }
+
     if not responders:
         logger.warning("No active responders to notify for collision %s", collision.get("id"))
-        return
+        return summary
 
     msg = _build_collision_alert_message(collision)
     for responder in responders:
         send_result = await _send_sms_via_api(responder.get("phone_number", ""), msg)
+        stored_message = send_result.get("message_used") or msg
         await _store_alert_record(
             db=db,
             collision_id=collision.get("id"),
             user_doc=responder,
-            message=msg,
+            message=stored_message,
             send_result=send_result,
             is_test=False,
         )
+
+        if send_result.get("ok"):
+            summary["sent"] += 1
+        else:
+            summary["failed"] += 1
+
+        summary["recipients"].append(
+            {
+                "name": responder.get("full_name"),
+                "phone_number": responder.get("phone_number"),
+                "status": "sent" if send_result.get("ok") else "failed",
+                "error": send_result.get("error"),
+            }
+        )
+
+    return summary
 
 @app.post("/api/alerts/test-sms")
 async def send_test_sms(body: SmsTestRequest, db=Depends(get_db), captain=Depends(captain_only)):
@@ -2455,11 +3433,12 @@ async def send_test_sms(body: SmsTestRequest, db=Depends(get_db), captain=Depend
 
     for responder in responders:
         send_result = await _send_sms_via_api(responder.get("phone_number", ""), message)
+        stored_message = send_result.get("message_used") or message
         await _store_alert_record(
             db=db,
             collision_id=None,
             user_doc=responder,
-            message=message,
+            message=stored_message,
             send_result=send_result,
             is_test=True,
             triggered_by=captain.get("id"),
@@ -2485,9 +3464,9 @@ async def send_test_sms(body: SmsTestRequest, db=Depends(get_db), captain=Depend
         "recipients": recipients,
     }
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # DASHBOARD STATS
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 @app.get("/api/dashboard/stats")
 async def dashboard_stats(db=Depends(get_db), _=Depends(get_current_user)):
     total_cameras  = await db.cameras.count_documents({})
@@ -2503,9 +3482,9 @@ async def dashboard_stats(db=Depends(get_db), _=Depends(get_current_user)):
         "total_alerts":    total_alerts,
     }
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 # HEALTH
-# ══════════════════════════════════════════════════════════════════════════════
+# ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "SafeSight API"}

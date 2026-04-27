@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { fetchAlerts, sendTestSmsAlert } from '../api'
 import { formatApiDateTime } from '../utils/datetime'
+import useAutoRefresh from '../utils/useAutoRefresh'
 
 export default function Alerts({ user, notify }) {
   const [alerts,  setAlerts]  = useState([])
@@ -10,21 +11,20 @@ export default function Alerts({ user, notify }) {
 
   const isCaptain = user?.role === 'captain'
 
-  async function loadAlerts() {
-    setLoading(true)
+  async function loadAlerts(options = {}) {
+    const background = !!options.background
+    if (!background) setLoading(true)
     try {
       const rows = await fetchAlerts()
       setAlerts(rows)
     } catch {
-      notify('Failed to load alerts.', 'error')
+      if (!background) notify('Failed to load alerts.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => {
-    loadAlerts()
-  }, [])
+  useAutoRefresh(loadAlerts, { intervalMs: 5000 })
 
   async function handleSendTestSms() {
     setSendingTest(true)
@@ -32,7 +32,7 @@ export default function Alerts({ user, notify }) {
       const result = await sendTestSmsAlert()
       const toastType = result.failed > 0 ? 'warning' : 'success'
       notify(`Test SMS done: ${result.sent} sent, ${result.failed} failed.`, toastType)
-      await loadAlerts()
+      await loadAlerts({ background: true })
     } catch (err) {
       notify(err?.response?.data?.detail || 'Failed to send test SMS.', 'error')
     } finally {

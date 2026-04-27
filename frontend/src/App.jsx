@@ -141,6 +141,7 @@ const RESPONDER_PAGES = ['dashboard', 'cameraDashboard', 'cameraLocations', 'col
 
 function Shell({ user, onLogout }) {
   const [page, setPage] = useState('dashboard')
+  const [navigationState, setNavigationState] = useState({})
   const [now, setNow] = useState(() => new Date())
   const notify = useNotif()
   const isCaptain = String(user?.role || '').toLowerCase() === 'captain'
@@ -169,11 +170,29 @@ function Shell({ user, onLogout }) {
     if (!allowedPages.includes(page)) setPage('dashboard')
   }, [page, allowedPages])
 
+  function handleNavigate(target) {
+    if (typeof target === 'string') {
+      setNavigationState({})
+      setPage(target)
+      return
+    }
+
+    if (target && typeof target === 'object') {
+      const nextPage = allowedPages.includes(target.page) ? target.page : 'dashboard'
+      setNavigationState(target.state && typeof target.state === 'object' ? target.state : {})
+      setPage(nextPage)
+      return
+    }
+
+    setNavigationState({})
+    setPage('dashboard')
+  }
+
   return (
     <div className="h-screen bg-gray-50 overflow-hidden">
       <Sidebar
         page={safePage}
-        setPage={setPage}
+        setPage={handleNavigate}
         user={user}
         onLogout={onLogout}
         allowedPages={allowedPages}
@@ -197,7 +216,7 @@ function Shell({ user, onLogout }) {
           </div>
         </div>
         <div className="p-6">
-          <PageComponent user={user} notify={notify} onNavigate={setPage} />
+          <PageComponent user={user} notify={notify} onNavigate={handleNavigate} navigationState={navigationState} />
         </div>
       </div>
     </div>

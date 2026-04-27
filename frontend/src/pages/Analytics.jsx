@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -12,9 +12,9 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
 } from 'recharts'
 import { fetchCollisions, fetchCameras } from '../api'
+import useAutoRefresh from '../utils/useAutoRefresh'
 
 const SEVERITY_COLORS = {
   high: '#ef4444',
@@ -31,10 +31,11 @@ const STATUS_COLORS = {
 
 function ChartCard({ title, subtitle, children }) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+    <div className="relative overflow-hidden bg-white/95 rounded-2xl shadow-sm border border-gray-200 p-5">
+      <div className="pointer-events-none absolute -top-16 -right-12 w-36 h-36 rounded-full bg-cyan-100/50 blur-2xl" />
       <div className="mb-4">
-        <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-        {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
+        <h3 className="text-base font-semibold tracking-tight text-gray-900">{title}</h3>
+        {subtitle && <p className="text-sm text-gray-500 mt-0.5">{subtitle}</p>}
       </div>
       {children}
     </div>
@@ -60,9 +61,52 @@ function StatCard({ icon, iconBg, iconColor, label, value, hint, hintColor = 'te
 
 function EmptyChart({ message }) {
   return (
-    <div className="h-72 flex items-center justify-center text-gray-500 text-sm bg-gray-50 rounded-lg border border-dashed border-gray-300">
+    <div className="h-72 flex items-center justify-center text-gray-500 text-sm bg-slate-50 rounded-xl border border-dashed border-slate-300">
       {message}
     </div>
+  )
+}
+
+function ModernTooltip({ active, label, payload, labelPrefix = '' }) {
+  if (!active || !payload || !payload.length) return null
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/95 backdrop-blur px-3 py-2 shadow-lg">
+      {label !== undefined && (
+        <p className="text-xs font-semibold text-slate-700">{labelPrefix}{label}</p>
+      )}
+      <div className="mt-1 space-y-1">
+        {payload.map(item => (
+          <div key={item.name} className="flex items-center justify-between gap-3 text-xs">
+            <span className="text-slate-600">{item.name}</span>
+            <span className="font-semibold text-slate-900">{item.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function renderSeverityLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, value, fill }) {
+  if (!percent || percent < 0.08) return null
+
+  const RADIAN = Math.PI / 180
+  const radius = outerRadius + 18
+  const x = cx + radius * Math.cos(-midAngle * RADIAN)
+  const y = cy + radius * Math.sin(-midAngle * RADIAN)
+
+  return (
+    <text
+      x={x}
+      y={y}
+      fill={fill}
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+      fontSize={12}
+      fontWeight={600}
+    >
+      {`${name} ${value} (${Math.round(percent * 100)}%)`}
+    </text>
   )
 }
 
@@ -71,21 +115,20 @@ export default function Analytics({ notify }) {
   const [cameras, setCameras] = useState([])
   const [loading, setLoading] = useState(true)
 
-  async function load() {
+  async function load(options = {}) {
+    const background = !!options.background
     try {
       const [collisionDocs, cameraDocs] = await Promise.all([fetchCollisions(), fetchCameras()])
       setCollisions(collisionDocs)
       setCameras(cameraDocs)
     } catch {
-      notify('Failed to load analytics data.', 'error')
+      if (!background) notify('Failed to load analytics data.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => {
-    load()
-  }, [])
+  useAutoRefresh(load, { intervalMs: 7000 })
 
   const analytics = useMemo(() => {
     const now = new Date()
@@ -148,6 +191,8 @@ export default function Analytics({ notify }) {
       { name: 'Low', value: severityCounts.low, color: SEVERITY_COLORS.low },
     ].filter(item => item.value > 0)
 
+    const severityTotal = severityData.reduce((sum, item) => sum + item.value, 0)
+
     const statusData = [
       { name: 'Pending', count: statusCounts.pending, color: STATUS_COLORS.pending },
       { name: 'Acknowledged', count: statusCounts.acknowledged, color: STATUS_COLORS.acknowledged },
@@ -168,6 +213,7 @@ export default function Analytics({ notify }) {
       highSeverity: severityCounts.high,
       dailyCounts,
       severityData,
+      severityTotal,
       statusData,
       topCameraData,
     }
@@ -235,23 +281,23 @@ export default function Analytics({ notify }) {
                 <AreaChart data={analytics.dailyCounts} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="dailyCollisionFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                      <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.45} />
+                      <stop offset="70%" stopColor="#f43f5e" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="#f43f5e" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="day" tick={{ fontSize: 12 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                  <Tooltip
-                    formatter={(value) => [`${value} incident(s)`, 'Collisions']}
-                    labelFormatter={(label) => `Day ${label}`}
-                  />
+                  <CartesianGrid strokeDasharray="2 6" stroke="#e2e8f0" />
+                  <XAxis dataKey="day" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                  <Tooltip content={<ModernTooltip labelPrefix="Day " />} />
                   <Area
                     type="monotone"
                     dataKey="collisions"
-                    stroke="#ef4444"
-                    strokeWidth={2}
+                    stroke="#e11d48"
+                    strokeWidth={2.5}
                     fill="url(#dailyCollisionFill)"
+                    dot={{ r: 2.5, fill: '#e11d48', stroke: '#fff', strokeWidth: 2 }}
+                    activeDot={{ r: 4.5, fill: '#be123c', stroke: '#fff', strokeWidth: 2 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -266,26 +312,54 @@ export default function Analytics({ notify }) {
           {analytics.severityData.length === 0 ? (
             <EmptyChart message="Severity chart will appear once collisions are recorded." />
           ) : (
-            <div className="h-72">
+            <div className="h-72 relative">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
+                <PieChart margin={{ top: 10, right: 40, bottom: 10, left: 40 }}>
+                  <defs>
+                    <filter id="pieShadow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.25" />
+                    </filter>
+                  </defs>
                   <Pie
                     data={analytics.severityData}
                     dataKey="value"
                     nameKey="name"
                     cx="50%"
                     cy="50%"
-                    outerRadius={100}
-                    label={({ name, value }) => `${name}: ${value}`}
+                    innerRadius={62}
+                    outerRadius={108}
+                    paddingAngle={2.5}
+                    stroke="#fff"
+                    strokeWidth={2}
+                    labelLine={false}
+                    label={renderSeverityLabel}
+                    style={{ filter: 'url(#pieShadow)' }}
                   >
                     {analytics.severityData.map(item => (
                       <Cell key={item.name} fill={item.color} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `${value} incident(s)`} />
-                  <Legend />
+                  <Tooltip content={<ModernTooltip />} />
                 </PieChart>
               </ResponsiveContainer>
+
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-[11px] uppercase tracking-wider text-slate-500">Total</p>
+                  <p className="text-2xl font-bold text-slate-900 leading-none mt-1">{analytics.severityTotal}</p>
+                  <p className="text-[11px] text-slate-500 mt-1">Incidents</p>
+                </div>
+              </div>
+
+              <div className="absolute left-0 right-0 bottom-0 flex items-center justify-center gap-3">
+                {analytics.severityData.map(item => (
+                  <div key={item.name} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 text-xs text-slate-700 shadow-sm">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                    <span className="font-medium">{item.name}</span>
+                    <span className="text-slate-500">{item.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </ChartCard>
@@ -304,17 +378,25 @@ export default function Analytics({ notify }) {
                   layout="vertical"
                   margin={{ top: 8, right: 20, left: 20, bottom: 8 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 12 }} />
+                  <defs>
+                    <linearGradient id="hotspotBar" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stopColor="#06b6d4" />
+                      <stop offset="100%" stopColor="#3b82f6" />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="2 6" stroke="#e2e8f0" />
+                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
                   <YAxis
                     type="category"
                     dataKey="name"
                     width={140}
-                    tick={{ fontSize: 12 }}
+                    tick={{ fontSize: 11, fill: '#475569' }}
                     interval={0}
+                    tickLine={false}
+                    axisLine={false}
                   />
-                  <Tooltip formatter={(value) => [`${value} incident(s)`, 'Collisions']} />
-                  <Bar dataKey="collisions" fill="#0ea5e9" radius={[0, 6, 6, 0]} />
+                  <Tooltip content={<ModernTooltip />} />
+                  <Bar dataKey="collisions" fill="url(#hotspotBar)" radius={[0, 10, 10, 0]} barSize={16} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -331,11 +413,11 @@ export default function Analytics({ notify }) {
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={analytics.statusData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
-                  <Tooltip formatter={(value) => [`${value} incident(s)`, 'Count']} />
-                  <Bar dataKey="count" radius={[6, 6, 0, 0]}>
+                  <CartesianGrid strokeDasharray="2 6" stroke="#e2e8f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                  <Tooltip content={<ModernTooltip />} />
+                  <Bar dataKey="count" radius={[10, 10, 0, 0]} barSize={30}>
                     {analytics.statusData.map(item => (
                       <Cell key={item.name} fill={item.color} />
                     ))}

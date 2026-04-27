@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, Marker, Popup, TileLayer, Tooltip } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import useAutoRefresh from '../utils/useAutoRefresh'
 import {
   acknowledgeCollision,
   fetchAlerts,
@@ -254,7 +255,8 @@ export default function Dashboard({ user, notify, onNavigate }) {
     return [sums.lat / mappedCameraPins.length, sums.lng / mappedCameraPins.length]
   }, [mappedCameraPins])
 
-  async function load() {
+  async function load(options = {}) {
+    const background = !!options.background
     try {
       const [statsDoc, collisionsDoc, cameraDocs, alertDocs] = await Promise.all([
         fetchStats(),
@@ -268,15 +270,13 @@ export default function Dashboard({ user, notify, onNavigate }) {
       setCameras(cameraDocs)
       setAlerts(alertDocs)
     } catch {
-      notify('Failed to load dashboard data.', 'error')
+      if (!background) notify('Failed to load dashboard data.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => {
-    load()
-  }, [])
+  useAutoRefresh(load, { intervalMs: 5000 })
 
   useEffect(() => {
     if (!cameras.length) {
@@ -354,10 +354,25 @@ export default function Dashboard({ user, notify, onNavigate }) {
     try {
       await acknowledgeCollision(id)
       notify('Event acknowledged.', 'success')
-      await load()
+      await load({ background: true })
     } catch {
       notify('Failed to acknowledge.', 'error')
     }
+  }
+
+  function openCameraLiveFeed(cameraId) {
+    if (!cameraId) {
+      onNavigate?.('cameraDashboard')
+      return
+    }
+
+    onNavigate?.({
+      page: 'cameraDashboard',
+      state: {
+        cameraId,
+        ts: Date.now(),
+      },
+    })
   }
 
   if (loading) {
@@ -565,6 +580,9 @@ export default function Dashboard({ user, notify, onNavigate }) {
                           key={camera.id}
                           position={[camera.map_latitude, camera.map_longitude]}
                           icon={isTopHotspot ? DASHBOARD_HOTSPOT_ICON : DASHBOARD_CAMERA_ICON}
+                          eventHandlers={{
+                            click: () => openCameraLiveFeed(camera.id),
+                          }}
                         >
                           <Tooltip direction="top" offset={[0, -10]}>{camera.name}</Tooltip>
                           <Popup>
@@ -574,6 +592,13 @@ export default function Dashboard({ user, notify, onNavigate }) {
                               <p className="text-xs text-gray-500 mt-1">
                                 {camera.map_latitude.toFixed(6)}, {camera.map_longitude.toFixed(6)}
                               </p>
+                              <button
+                                type="button"
+                                onClick={() => openCameraLiveFeed(camera.id)}
+                                className="mt-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
+                              >
+                                Open Live Feed
+                              </button>
                             </div>
                           </Popup>
                         </Marker>
@@ -652,6 +677,15 @@ export default function Dashboard({ user, notify, onNavigate }) {
                 </div>
 
                 <p className="text-xs text-gray-500">Auto-refreshing camera snapshots every 3 seconds.</p>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => openCameraLiveFeed(selectedCamera.id)}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
+                  >
+                    Open This Camera in Live Feed
+                  </button>
+                </div>
               </div>
             )}
           </div>

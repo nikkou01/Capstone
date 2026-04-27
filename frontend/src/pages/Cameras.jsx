@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { fetchCameras, createCamera, updateCamera, reconnectCamera, deleteCamera } from '../api'
+import useAutoRefresh from '../utils/useAutoRefresh'
 
 const EMPTY = { name: '', location: '', rtsp_url: '', description: '' }
 
@@ -13,17 +14,18 @@ export default function Cameras({ user, notify }) {
   const [actionBusyById, setActionBusyById] = useState({})
   const isCaptain = user?.role === 'captain'
 
-  async function load() {
+  async function load(options = {}) {
+    const background = !!options.background
     try {
       setCameras(await fetchCameras())
     } catch {
-      notify('Failed to load cameras.', 'error')
+      if (!background) notify('Failed to load cameras.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useAutoRefresh(load, { intervalMs: 5000 })
 
   function getErrorDetail(err, fallback) {
     return err?.response?.data?.detail || fallback

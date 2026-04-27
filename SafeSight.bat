@@ -4,9 +4,13 @@ setlocal
 set "ROOT=%~dp0"
 set "BACKEND_DIR=%ROOT%backend"
 set "FRONTEND_DIR=%ROOT%frontend"
+set "MOBILE_DIR=%ROOT%mobile-responder"
+set "PREFLIGHT_SCRIPT=%ROOT%preflight.bat"
 set "BACKEND_PYTHON=%BACKEND_DIR%\.venv\Scripts\python.exe"
 set "BACKEND_ENV_FILE=%BACKEND_DIR%\.env"
 set "BACKEND_ENV_TEMPLATE=%BACKEND_DIR%\.env.example"
+set "LAN_IP="
+set "MOBILE_API_URL="
 
 if not exist "%BACKEND_PYTHON%" (
     echo ERROR: Backend virtual environment is missing.
@@ -21,6 +25,20 @@ if errorlevel 1 (
     echo Install Node.js, then run install.bat.
     pause
     exit /b 1
+)
+
+if exist "%PREFLIGHT_SCRIPT%" (
+    echo Running preflight checks...
+    call "%PREFLIGHT_SCRIPT%"
+    if errorlevel 1 (
+        echo.
+        echo ERROR: Preflight checks failed.
+        echo Resolve the failed checks above, then run SafeSight.bat again.
+        pause
+        exit /b 1
+    )
+) else (
+    echo WARNING: preflight.bat not found. Continuing without preflight checks.
 )
 
 echo =========================================
@@ -88,7 +106,20 @@ if errorlevel 1 (
     )
 )
 
-echo Starting backend, frontend, and desktop window...
+if exist "%MOBILE_DIR%\package.json" (
+    echo Resolving LAN IP for mobile API...
+    for /f "usebackq delims=" %%I in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip=(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue ^| Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' } ^| Select-Object -First 1 -ExpandProperty IPAddress); if($ip){$ip}else{'127.0.0.1'}"`) do set "LAN_IP=%%I"
+    if not defined LAN_IP set "LAN_IP=127.0.0.1"
+    set "MOBILE_API_URL=http://%LAN_IP%:8000/api"
+
+    echo Starting mobile responder app in a new terminal...
+    start "SafeSight Mobile (Expo)" cmd /k "cd /d ""%MOBILE_DIR%"" && set EXPO_PUBLIC_API_BASE_URL=%MOBILE_API_URL% && npm run start -- --tunnel --clear"
+    echo Mobile API URL: %MOBILE_API_URL%
+) else (
+    echo mobile-responder folder not found. Skipping mobile app launch.
+)
+
+echo Starting backend, frontend, desktop window...
 
 cd /d "%FRONTEND_DIR%"
 call npm run desktop

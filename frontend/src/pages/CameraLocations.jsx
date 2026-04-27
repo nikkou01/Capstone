@@ -3,6 +3,7 @@ import { MapContainer, Marker, Popup, TileLayer, Tooltip, useMap, useMapEvents }
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { createCamera, fetchCameras, updateCamera } from '../api'
+import useAutoRefresh from '../utils/useAutoRefresh'
 
 const DEFAULT_CENTER = [14.5995, 120.9842]
 
@@ -45,7 +46,7 @@ function RecenterMap({ center }) {
   return null
 }
 
-export default function CameraLocations({ user, notify }) {
+export default function CameraLocations({ user, notify, onNavigate }) {
   const [cameras, setCameras] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedCameraId, setSelectedCameraId] = useState('')
@@ -56,7 +57,8 @@ export default function CameraLocations({ user, notify }) {
 
   const isCaptain = user?.role === 'captain'
 
-  async function load() {
+  async function load(options = {}) {
+    const background = !!options.background
     try {
       const rows = await fetchCameras()
       setCameras(rows)
@@ -66,13 +68,13 @@ export default function CameraLocations({ user, notify }) {
         setSelectedCameraId(rows[0].id)
       }
     } catch {
-      notify('Failed to load camera locations.', 'error')
+      if (!background) notify('Failed to load camera locations.', 'error')
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useAutoRefresh(load, { intervalMs: 6000 })
 
   const pinnedCameras = useMemo(
     () => cameras.filter(c => Number.isFinite(c.map_latitude) && Number.isFinite(c.map_longitude)),
@@ -136,6 +138,21 @@ export default function CameraLocations({ user, notify }) {
     } finally {
       setSeeding(false)
     }
+  }
+
+  function openCameraLiveFeed(cameraId) {
+    if (!cameraId) {
+      onNavigate?.('cameraDashboard')
+      return
+    }
+
+    onNavigate?.({
+      page: 'cameraDashboard',
+      state: {
+        cameraId,
+        ts: Date.now(),
+      },
+    })
   }
 
   if (loading) {
@@ -282,7 +299,14 @@ export default function CameraLocations({ user, notify }) {
                 />
 
                 {pinnedCameras.map(cam => (
-                  <Marker key={cam.id} position={[cam.map_latitude, cam.map_longitude]} icon={PINNED_CAMERA_ICON}>
+                  <Marker
+                    key={cam.id}
+                    position={[cam.map_latitude, cam.map_longitude]}
+                    icon={PINNED_CAMERA_ICON}
+                    eventHandlers={{
+                      click: () => openCameraLiveFeed(cam.id),
+                    }}
+                  >
                     <Tooltip permanent direction="top" offset={[0, -10]}>{cam.name}</Tooltip>
                     <Popup>
                       <div className="text-sm">
@@ -291,6 +315,13 @@ export default function CameraLocations({ user, notify }) {
                         <p className="text-xs text-gray-500 mt-1">
                           {cam.map_latitude.toFixed(6)}, {cam.map_longitude.toFixed(6)}
                         </p>
+                        <button
+                          type="button"
+                          onClick={() => openCameraLiveFeed(cam.id)}
+                          className="mt-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
+                        >
+                          Open Live Feed
+                        </button>
                       </div>
                     </Popup>
                   </Marker>
@@ -328,7 +359,14 @@ export default function CameraLocations({ user, notify }) {
               />
 
               {pinnedCameras.map(cam => (
-                <Marker key={cam.id} position={[cam.map_latitude, cam.map_longitude]} icon={PINNED_CAMERA_ICON}>
+                <Marker
+                  key={cam.id}
+                  position={[cam.map_latitude, cam.map_longitude]}
+                  icon={PINNED_CAMERA_ICON}
+                  eventHandlers={{
+                    click: () => openCameraLiveFeed(cam.id),
+                  }}
+                >
                   <Tooltip permanent direction="top" offset={[0, -10]}>{cam.name}</Tooltip>
                   <Popup>
                     <div className="text-sm">
@@ -337,6 +375,13 @@ export default function CameraLocations({ user, notify }) {
                       <p className="text-xs text-gray-500 mt-1">
                         {cam.map_latitude.toFixed(6)}, {cam.map_longitude.toFixed(6)}
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => openCameraLiveFeed(cam.id)}
+                        className="mt-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
+                      >
+                        Open Live Feed
+                      </button>
                     </div>
                   </Popup>
                 </Marker>
